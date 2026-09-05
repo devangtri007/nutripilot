@@ -8,359 +8,381 @@ import requests
 import streamlit as st
 from openai import OpenAI
 
-st.set_page_config(page_title="NutriPilot", page_icon="N", layout="wide")
+st.set_page_config(page_title="NutriPilot", page_icon="🥗", layout="centered")
 
-
-# -----------------------------------------------------------------------------
-# NutriPilot visual system
-# Palette: Cream #f3e8cc · Forest Green #18542a · Crisp Carrot #f96015
-# Keep the product logic below independent from the presentation layer.
-# -----------------------------------------------------------------------------
+# FIXED UI: premium theme layer; product/data/AI logic below is unchanged.
 st.markdown(
     """
-    <style>
-    :root {
-        --np-cream: #f3e8cc;
-        --np-green: #18542a;
-        --np-carrot: #f96015;
-        --np-green-72: rgba(24, 84, 42, 0.72);
-        --np-green-55: rgba(24, 84, 42, 0.55);
-        --np-green-25: rgba(24, 84, 42, 0.25);
-        --np-green-14: rgba(24, 84, 42, 0.14);
-        --np-green-08: rgba(24, 84, 42, 0.08);
-        --np-carrot-14: rgba(249, 96, 21, 0.14);
-    }
+<style>
+/* ======================================================================
+   NUTRIPILOT PREMIUM UI SYSTEM
+   FIX 01 — Theme-aware brand tokens
+   - Brand palette: Cream / Forest Green / Crisp Carrot.
+   - Streamlit theme variables remain the source of truth for base, surface,
+     text and border colors so Light, Dark and System modes remain legible.
+   ====================================================================== */
+:root {
+    --np-cream: #f3e8cc;
+    --np-green: #18542a;
+    --np-carrot: #f96015;
 
-    /* Page canvas */
-    html, body, [data-testid="stAppViewContainer"],
-    [data-testid="stAppViewContainer"] > .main {
-        background: var(--np-cream) !important;
-    }
+    --np-bg: var(--background-color, var(--st-background-color, var(--np-cream)));
+    --np-surface: var(--secondary-background-color, var(--st-secondary-background-color, var(--np-bg)));
+    --np-text: var(--text-color, var(--st-text-color, var(--np-green)));
+    --np-border: var(--border-color, var(--st-border-color, var(--np-green)));
+    --np-muted: color-mix(in srgb, var(--np-text) 68%, transparent);
+    --np-border-soft: color-mix(in srgb, var(--np-border) 24%, transparent);
+    --np-border-strong: color-mix(in srgb, var(--np-border) 52%, transparent);
+    --np-accent-soft: color-mix(in srgb, var(--np-carrot) 14%, transparent);
+}
 
-    [data-testid="stHeader"] {
-        background: var(--np-cream) !important;
-        box-shadow: none !important;
-    }
+/* FIX 02 — Theme-safe application canvas and typography */
+html, body,
+[data-testid="stAppViewContainer"],
+[data-testid="stAppViewContainer"] > .main,
+[data-testid="stMainBlockContainer"] {
+    background: var(--np-bg) !important;
+    color: var(--np-text) !important;
+}
 
-    [data-testid="stToolbar"] {
-        background: transparent !important;
-    }
+[data-testid="stHeader"] {
+    background: var(--np-bg) !important;
+    box-shadow: none !important;
+}
 
-    .main .block-container {
-        max-width: 1120px;
-        padding: 4.5rem 2.25rem 5rem;
-    }
+[data-testid="stToolbar"] { background: transparent !important; }
 
-    /* Global typography */
-    [data-testid="stAppViewContainer"] * {
-        font-family: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont,
-                     "Segoe UI", sans-serif;
-    }
+.main .block-container {
+    max-width: 1120px;
+    padding: 3.75rem 2rem 5rem;
+}
 
-    [data-testid="stAppViewContainer"] h1,
-    [data-testid="stAppViewContainer"] h2,
-    [data-testid="stAppViewContainer"] h3,
-    [data-testid="stAppViewContainer"] h4 {
-        color: var(--np-green) !important;
-        font-weight: 700 !important;
-        letter-spacing: -0.035em;
-    }
+[data-testid="stAppViewContainer"] * {
+    font-family: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont,
+        "Segoe UI", sans-serif;
+}
 
-    [data-testid="stAppViewContainer"] h1 {
-        font-size: clamp(2.4rem, 5vw, 4.25rem) !important;
-        line-height: 1.02 !important;
-        margin-bottom: 0.45rem !important;
-    }
+[data-testid="stAppViewContainer"] h1,
+[data-testid="stAppViewContainer"] h2,
+[data-testid="stAppViewContainer"] h3,
+[data-testid="stAppViewContainer"] h4 {
+    color: var(--np-text) !important;
+    font-weight: 750 !important;
+    letter-spacing: -0.035em;
+}
 
-    [data-testid="stAppViewContainer"] h2 {
-        font-size: clamp(1.65rem, 3vw, 2.35rem) !important;
-        line-height: 1.08 !important;
-        margin-top: 0.2rem !important;
-    }
+[data-testid="stAppViewContainer"] h1 {
+    font-size: clamp(2.45rem, 5vw, 4rem) !important;
+    line-height: 1.02 !important;
+    margin-bottom: .35rem !important;
+}
 
-    [data-testid="stAppViewContainer"] h3 {
-        font-size: 1.35rem !important;
-        line-height: 1.15 !important;
-    }
+[data-testid="stAppViewContainer"] h2 {
+    font-size: clamp(1.7rem, 3vw, 2.35rem) !important;
+    line-height: 1.08 !important;
+}
 
-    [data-testid="stAppViewContainer"] p,
-    [data-testid="stAppViewContainer"] label,
-    [data-testid="stAppViewContainer"] li,
-    [data-testid="stAppViewContainer"] .stMarkdown,
-    [data-testid="stAppViewContainer"] .stCaption {
-        color: var(--np-green-72) !important;
-    }
+[data-testid="stAppViewContainer"] h3 {
+    font-size: 1.35rem !important;
+    line-height: 1.15 !important;
+}
 
-    [data-testid="stAppViewContainer"] strong {
-        color: var(--np-green) !important;
-    }
+[data-testid="stAppViewContainer"] p,
+[data-testid="stAppViewContainer"] label,
+[data-testid="stAppViewContainer"] li,
+[data-testid="stAppViewContainer"] .stMarkdown,
+[data-testid="stAppViewContainer"] .stCaption,
+[data-testid="stCaptionContainer"] {
+    color: var(--np-muted) !important;
+}
 
-    /* Remove Streamlit's default visual noise */
-    hr {
-        border: 0 !important;
-        border-top: 1px solid var(--np-green-25) !important;
-        margin: 2rem 0 !important;
-    }
+[data-testid="stAppViewContainer"] strong { color: var(--np-text) !important; }
 
-    [data-testid="stDecoration"] {
-        background: var(--np-green) !important;
-    }
+hr {
+    border: 0 !important;
+    border-top: 1px solid var(--np-border-soft) !important;
+    margin: 2.1rem 0 !important;
+}
 
-    /* Bordered containers become the primary card primitive */
-    [data-testid="stVerticalBlockBorderWrapper"] {
-        border: 1px solid var(--np-green-25) !important;
-        border-radius: 18px !important;
-        background: var(--np-cream) !important;
-        box-shadow: none !important;
-        padding: 0.35rem !important;
-    }
+/* FIX 03 — Rounded containers/cards with no gradients or heavy shadows */
+[data-testid="stVerticalBlockBorderWrapper"] {
+    border: 1px solid var(--np-border-soft) !important;
+    border-radius: 18px !important;
+    background: var(--np-surface) !important;
+    box-shadow: none !important;
+}
 
-    /* Inputs */
-    [data-baseweb="select"] > div,
-    [data-baseweb="input"] > div,
-    [data-baseweb="textarea"] > div,
-    [data-testid="stTextInput"] input,
-    [data-testid="stNumberInput"] input,
-    textarea {
-        background: var(--np-cream) !important;
-        color: var(--np-green) !important;
-        border-color: var(--np-green-25) !important;
-        border-radius: 10px !important;
-        box-shadow: none !important;
-    }
+/* FIX 04 — Inputs: theme-aware surface + carrot focus state */
+[data-baseweb="select"] > div,
+[data-baseweb="input"] > div,
+[data-baseweb="textarea"] > div,
+[data-testid="stTextInput"] input,
+[data-testid="stNumberInput"] input,
+textarea {
+    background: var(--np-surface) !important;
+    color: var(--np-text) !important;
+    border: 1px solid var(--np-border-soft) !important;
+    border-radius: 11px !important;
+    box-shadow: none !important;
+}
 
-    [data-baseweb="select"] > div:hover,
-    [data-baseweb="input"] > div:hover,
-    [data-baseweb="textarea"] > div:hover {
-        border-color: var(--np-green-55) !important;
-    }
+[data-baseweb="select"] > div:hover,
+[data-baseweb="input"] > div:hover,
+[data-baseweb="textarea"] > div:hover {
+    border-color: var(--np-border-strong) !important;
+}
 
-    [data-baseweb="select"] > div:focus-within,
-    [data-baseweb="input"] > div:focus-within,
-    [data-baseweb="textarea"] > div:focus-within,
-    input:focus,
-    textarea:focus {
-        border-color: var(--np-carrot) !important;
-        box-shadow: 0 0 0 1px var(--np-carrot) !important;
-    }
+[data-baseweb="select"] > div:focus-within,
+[data-baseweb="input"] > div:focus-within,
+[data-baseweb="textarea"] > div:focus-within,
+input:focus,
+textarea:focus {
+    border-color: var(--np-carrot) !important;
+    box-shadow: 0 0 0 1px var(--np-carrot) !important;
+}
 
-    [data-baseweb="select"] svg {
-        fill: var(--np-green) !important;
-    }
+[data-baseweb="select"] span,
+[data-baseweb="select"] input,
+[data-baseweb="input"] input,
+[data-baseweb="textarea"] textarea {
+    color: var(--np-text) !important;
+}
 
-    [data-baseweb="popover"] {
-        background: var(--np-cream) !important;
-        border: 1px solid var(--np-green-25) !important;
-        border-radius: 12px !important;
-        box-shadow: none !important;
-    }
+[data-baseweb="select"] svg { fill: var(--np-text) !important; }
 
-    [role="option"] {
-        background: var(--np-cream) !important;
-        color: var(--np-green) !important;
-    }
+/* Dropdown/popover surfaces */
+[data-baseweb="popover"],
+[data-baseweb="menu"] {
+    background: var(--np-surface) !important;
+    border: 1px solid var(--np-border-soft) !important;
+    border-radius: 12px !important;
+    box-shadow: none !important;
+}
 
-    [role="option"]:hover,
-    [aria-selected="true"] {
-        background: var(--np-carrot-14) !important;
-        color: var(--np-green) !important;
-    }
+[role="option"] {
+    background: var(--np-surface) !important;
+    color: var(--np-text) !important;
+}
 
-    /* Radio / multiselect / slider active states */
-    [data-testid="stRadio"] label,
-    [data-testid="stCheckbox"] label,
-    [data-testid="stMultiSelect"] label {
-        color: var(--np-green) !important;
-    }
+[role="option"]:hover,
+[role="option"][aria-selected="true"] {
+    background: var(--np-accent-soft) !important;
+    color: var(--np-text) !important;
+}
 
-    [data-testid="stRadio"] [aria-checked="true"] div,
-    [data-testid="stCheckbox"] [aria-checked="true"] div {
-        color: var(--np-carrot) !important;
-    }
+/* FIX 05 — Multiselect tags use the single interactive accent */
+[data-testid="stMultiSelect"] [data-baseweb="tag"] {
+    background: var(--np-carrot) !important;
+    border: 1px solid var(--np-carrot) !important;
+    color: var(--np-cream) !important;
+    border-radius: 999px !important;
+}
 
-    [data-testid="stSlider"] [role="slider"] {
-        background: var(--np-carrot) !important;
-        border-color: var(--np-carrot) !important;
-    }
+[data-testid="stMultiSelect"] [data-baseweb="tag"] span,
+[data-testid="stMultiSelect"] [data-baseweb="tag"] svg {
+    color: var(--np-cream) !important;
+    fill: var(--np-cream) !important;
+}
 
-    [data-testid="stSlider"] [data-baseweb="slider"] > div > div {
-        background: var(--np-green-25) !important;
-    }
+/* FIX 06 — Radio buttons: no default red/grey; selected state is carrot */
+[data-testid="stRadio"] label,
+[data-testid="stCheckbox"] label,
+[data-testid="stMultiSelect"] label {
+    color: var(--np-text) !important;
+}
 
-    /* Buttons: carrot only for primary CTAs; secondary actions stay green/cream */
-    div.stButton > button,
-    div.stDownloadButton > button,
-    [data-testid="stFormSubmitButton"] button {
-        min-height: 2.75rem;
-        border-radius: 10px !important;
-        border: 1px solid var(--np-green) !important;
-        background: var(--np-cream) !important;
-        color: var(--np-green) !important;
-        font-weight: 650 !important;
-        box-shadow: none !important;
-        transition: border-color 120ms ease, background 120ms ease,
-                    transform 120ms ease;
-    }
+[data-testid="stRadio"] [role="radio"] > div:first-child {
+    border-color: var(--np-border-strong) !important;
+    background: transparent !important;
+}
 
-    div.stButton > button:hover,
-    div.stDownloadButton > button:hover,
-    [data-testid="stFormSubmitButton"] button:hover {
-        background: var(--np-green-08) !important;
-        border-color: var(--np-green) !important;
-        color: var(--np-green) !important;
-        transform: translateY(-1px);
-    }
+[data-testid="stRadio"] [role="radio"][aria-checked="true"] > div:first-child {
+    border-color: var(--np-carrot) !important;
+    background: var(--np-carrot) !important;
+}
 
-    div.stButton > button:focus,
-    div.stDownloadButton > button:focus,
-    [data-testid="stFormSubmitButton"] button:focus {
-        box-shadow: 0 0 0 2px var(--np-carrot) !important;
-    }
+[data-testid="stRadio"] [role="radio"][aria-checked="true"] > div:first-child > div {
+    background: var(--np-cream) !important;
+}
 
-    div.stButton > button[kind="primary"],
-    div.stButton > button[data-testid="stBaseButton-primary"],
-    div.stDownloadButton > button[kind="primary"],
-    div.stDownloadButton > button[data-testid="stBaseButton-primary"] {
-        background: var(--np-carrot) !important;
-        border-color: var(--np-carrot) !important;
-        color: var(--np-cream) !important;
-    }
+/* FIX 07 — Slider: carrot track/thumb, theme-safe inactive rail */
+[data-testid="stSlider"] [role="slider"] {
+    background: var(--np-carrot) !important;
+    border-color: var(--np-carrot) !important;
+}
 
-    div.stButton > button[kind="primary"]:hover,
-    div.stButton > button[data-testid="stBaseButton-primary"]:hover,
-    div.stDownloadButton > button[kind="primary"]:hover,
-    div.stDownloadButton > button[data-testid="stBaseButton-primary"]:hover {
-        background: var(--np-carrot) !important;
-        border-color: var(--np-green) !important;
-        color: var(--np-cream) !important;
-    }
+[data-testid="stSlider"] [data-baseweb="slider"] > div > div {
+    background: var(--np-border-soft) !important;
+}
 
-    /* Metrics */
-    [data-testid="stMetric"] {
-        background: var(--np-cream) !important;
-        border: 1px solid var(--np-green-25) !important;
-        border-radius: 14px !important;
-        padding: 1rem 1.1rem !important;
-    }
+/* FIX 08 — Buttons: ALWAYS high-contrast carrot + cream text */
+div.stButton > button,
+div.stDownloadButton > button,
+[data-testid="stFormSubmitButton"] button {
+    min-height: 2.7rem;
+    border-radius: 11px !important;
+    border: 1px solid var(--np-carrot) !important;
+    background: var(--np-carrot) !important;
+    color: var(--np-cream) !important;
+    font-weight: 700 !important;
+    box-shadow: none !important;
+    transition: transform 120ms ease, border-color 120ms ease;
+}
 
-    [data-testid="stMetricLabel"] {
-        color: var(--np-green-55) !important;
-        font-size: 0.76rem !important;
-        text-transform: uppercase;
-        letter-spacing: 0.08em;
-    }
+div.stButton > button:hover,
+div.stDownloadButton > button:hover,
+[data-testid="stFormSubmitButton"] button:hover {
+    background: var(--np-carrot) !important;
+    color: var(--np-cream) !important;
+    border-color: var(--np-carrot) !important;
+    transform: translateY(-1px);
+}
 
-    [data-testid="stMetricValue"] {
-        color: var(--np-carrot) !important;
-        font-weight: 750 !important;
-        letter-spacing: -0.035em;
-    }
+div.stButton > button:focus-visible,
+div.stDownloadButton > button:focus-visible,
+[data-testid="stFormSubmitButton"] button:focus-visible {
+    outline: 2px solid var(--np-carrot) !important;
+    outline-offset: 2px !important;
+    box-shadow: none !important;
+}
 
-    /* Context/status messages: retain semantic distinction without introducing colors */
-    [data-testid="stAlert"] {
-        background: var(--np-cream) !important;
-        border: 1px solid var(--np-green-25) !important;
-        border-left: 3px solid var(--np-carrot) !important;
-        border-radius: 12px !important;
-        color: var(--np-green) !important;
-        box-shadow: none !important;
-    }
+div.stButton > button:disabled,
+div.stDownloadButton > button:disabled,
+[data-testid="stFormSubmitButton"] button:disabled {
+    opacity: .48 !important;
+    background: var(--np-surface) !important;
+    color: var(--np-muted) !important;
+    border-color: var(--np-border-soft) !important;
+}
 
-    [data-testid="stAlert"] * {
-        color: var(--np-green) !important;
-    }
+/* FIX 09 — Metric cards: subtle themed surface, clear hierarchy */
+[data-testid="stMetric"] {
+    background: var(--np-accent-soft) !important;
+    border: 1px solid var(--np-border-soft) !important;
+    border-radius: 15px !important;
+    padding: 1rem 1.1rem !important;
+}
 
-    /* Expanders */
-    [data-testid="stExpander"] {
-        border: 1px solid var(--np-green-25) !important;
-        border-radius: 14px !important;
-        background: var(--np-cream) !important;
-        box-shadow: none !important;
-    }
+[data-testid="stMetricLabel"] {
+    color: var(--np-muted) !important;
+    font-size: .72rem !important;
+    font-weight: 700 !important;
+    text-transform: uppercase;
+    letter-spacing: .09em;
+}
 
-    [data-testid="stExpander"] summary {
-        color: var(--np-green) !important;
-        font-weight: 650 !important;
-    }
+[data-testid="stMetricValue"] {
+    color: var(--np-text) !important;
+    font-weight: 800 !important;
+    letter-spacing: -.035em;
+}
 
-    /* Tabs, if introduced later */
-    [data-baseweb="tab-list"] {
-        gap: 0.4rem;
-        border-bottom: 1px solid var(--np-green-25) !important;
-    }
+[data-testid="stMetricDelta"] { color: var(--np-carrot) !important; }
 
-    [data-baseweb="tab"] {
-        color: var(--np-green-55) !important;
-        background: transparent !important;
-    }
+/* FIX 10 — Info/success/error/warning banners all share one brand treatment.
+   This removes Streamlit's default red/green/yellow semantic colors from the UI. */
+[data-testid="stAlert"] {
+    background: var(--np-surface) !important;
+    border: 1px solid var(--np-border-soft) !important;
+    border-left: 3px solid var(--np-carrot) !important;
+    border-radius: 13px !important;
+    color: var(--np-text) !important;
+    box-shadow: none !important;
+}
 
-    [data-baseweb="tab"][aria-selected="true"] {
-        color: var(--np-green) !important;
-        border-bottom: 2px solid var(--np-carrot) !important;
-    }
+[data-testid="stAlert"] * { color: var(--np-text) !important; }
+[data-testid="stAlert"] svg { color: var(--np-carrot) !important; fill: var(--np-carrot) !important; }
 
-    /* Chat */
-    [data-testid="stChatMessage"] {
-        background: var(--np-cream) !important;
-        border: 1px solid var(--np-green-14) !important;
-        border-radius: 14px !important;
-        margin-bottom: 0.65rem !important;
-    }
+/* FIX 11 — Tabs: carrot is the only active-state color */
+[data-baseweb="tab-list"] {
+    gap: .35rem;
+    border-bottom: 1px solid var(--np-border-soft) !important;
+}
 
-    [data-testid="stChatInput"] {
-        background: var(--np-cream) !important;
-        border: 1px solid var(--np-green-25) !important;
-        border-radius: 14px !important;
-    }
+[data-baseweb="tab"] {
+    color: var(--np-muted) !important;
+    background: transparent !important;
+}
 
-    [data-testid="stChatInput"] textarea {
-        border: 0 !important;
-        box-shadow: none !important;
-    }
+[data-baseweb="tab"][aria-selected="true"] {
+    color: var(--np-carrot) !important;
+    border-bottom: 2px solid var(--np-carrot) !important;
+}
 
-    /* Dataframes */
-    [data-testid="stDataFrame"] {
-        border: 1px solid var(--np-green-25) !important;
-        border-radius: 12px !important;
-        overflow: hidden !important;
-    }
+/* FIX 12 — Expanders/chat match the same card language */
+[data-testid="stExpander"] {
+    border: 1px solid var(--np-border-soft) !important;
+    border-radius: 14px !important;
+    background: var(--np-surface) !important;
+    box-shadow: none !important;
+}
 
-    /* Captions / footer */
-    [data-testid="stCaptionContainer"] {
-        color: var(--np-green-55) !important;
-    }
+[data-testid="stExpander"] summary { color: var(--np-text) !important; font-weight: 700 !important; }
 
-    /* Sidebar is styled proactively even though the current app is main-column based. */
-    section[data-testid="stSidebar"] {
-        background: var(--np-cream) !important;
-        border-right: 1px solid var(--np-green-25) !important;
-    }
+[data-testid="stChatMessage"] {
+    background: var(--np-surface) !important;
+    border: 1px solid var(--np-border-soft) !important;
+    border-radius: 14px !important;
+    margin-bottom: .65rem !important;
+}
 
-    section[data-testid="stSidebar"] * {
-        color: var(--np-green) !important;
-    }
+[data-testid="stChatInput"] {
+    background: var(--np-surface) !important;
+    border: 1px solid var(--np-border-soft) !important;
+    border-radius: 14px !important;
+}
 
-    section[data-testid="stSidebar"] [data-baseweb="select"] > div,
-    section[data-testid="stSidebar"] [data-baseweb="input"] > div {
-        background: var(--np-cream) !important;
-        border-color: var(--np-green-25) !important;
-    }
+[data-testid="stChatInput"] textarea {
+    background: transparent !important;
+    border: 0 !important;
+    box-shadow: none !important;
+}
 
-    /* Responsive spacing */
-    @media (max-width: 760px) {
-        .main .block-container {
-            padding: 2.25rem 1rem 3rem;
-        }
+/* FIX 13 — Dataframes/tables: theme-aware surfaces and borders */
+[data-testid="stDataFrame"] {
+    border: 1px solid var(--np-border-soft) !important;
+    border-radius: 12px !important;
+    overflow: hidden !important;
+    background: var(--np-surface) !important;
+}
 
-        [data-testid="stAppViewContainer"] h1 {
-            font-size: 2.5rem !important;
-        }
+/* Streamlit's dataframe uses a canvas for cells; these variables are still
+   consumed by current Streamlit dataframe styling where available. */
+[data-testid="stDataFrame"] {
+    --dataframe-border-color: var(--np-border-soft) !important;
+    --dataframe-header-background-color: var(--np-surface) !important;
+}
 
-        [data-testid="stMetric"] {
-            padding: 0.8rem !important;
-        }
-    }
-    </style>
+/* FIX 14 — Sidebar follows the active Streamlit theme rather than gray defaults */
+section[data-testid="stSidebar"] {
+    background: var(--np-bg) !important;
+    border-right: 1px solid var(--np-border-soft) !important;
+}
+
+section[data-testid="stSidebar"] * { color: var(--np-text) !important; }
+
+section[data-testid="stSidebar"] [data-baseweb="select"] > div,
+section[data-testid="stSidebar"] [data-baseweb="input"] > div {
+    background: var(--np-surface) !important;
+    border-color: var(--np-border-soft) !important;
+}
+
+/* FIX 15 — Native Streamlit icon color follows the button foreground */
+div.stButton > button svg,
+div.stDownloadButton > button svg,
+[data-testid="stFormSubmitButton"] button svg {
+    color: currentColor !important;
+    fill: currentColor !important;
+}
+
+/* Responsive */
+@media (max-width: 760px) {
+    .main .block-container { padding: 2.25rem 1rem 3rem; }
+    [data-testid="stAppViewContainer"] h1 { font-size: 2.5rem !important; }
+    [data-testid="stMetric"] { padding: .8rem !important; }
+}
+</style>
+
     """,
     unsafe_allow_html=True,
 )
@@ -1596,136 +1618,137 @@ st.subheader("Your local, seasonal nutrition copilot.")
 st.write("Meal recommendations shaped by your goals, diet, location, season and current weather.")
 
 st.divider()
-with st.container(border=True):
-    st.header("Your Profile")
+st.header("Your Profile")
 
-    countries = sorted(locations["country"].unique().tolist())
-    country = st.selectbox("Country", countries, key="country_select")
+countries = sorted(locations["country"].unique().tolist())
+country = st.selectbox("Country", countries, key="country_select")
 
-    region_options = sorted(
-        locations.loc[locations["country"] == country, "region"].unique().tolist()
+region_options = sorted(
+    locations.loc[locations["country"] == country, "region"].unique().tolist()
+)
+region = st.selectbox("State / Region", region_options, key="region_select")
+
+city_options = sorted(
+    locations.loc[
+        (locations["country"] == country) & (locations["region"] == region),
+        "city",
+    ].unique().tolist()
+)
+city = st.selectbox("City", city_options, key="city_select")
+
+goal = st.selectbox(
+    "Primary goal",
+    ["General wellness", "Weight management", "Muscle gain", "High protein", "Better energy"],
+    key="goal_select",
+)
+
+diet = st.selectbox(
+    "Diet",
+    ["Vegetarian", "Vegan", "Eggetarian", "Non-vegetarian"],
+    key="diet_select",
+)
+
+restrictions = st.text_input(
+    "Allergies or foods to avoid",
+    placeholder="e.g., peanuts, mushrooms, lactose",
+    key="restrictions_input",
+)
+
+meals = st.multiselect(
+    "Meals to plan",
+    ["Breakfast", "Lunch", "Dinner", "Snacks"],
+    default=["Breakfast", "Lunch", "Dinner"],
+    key="meals_select",
+)
+
+st.subheader("How do you want to use NutriPilot?")
+
+planning_mode = st.radio(
+    "Choose a planning mode",
+    ["Just one meal", "Multi-day schedule"],
+    horizontal=True,
+    key="planning_mode",
+    help="Choose one meal for an on-demand recommendation, or build a 3–7 day schedule.",
+)
+
+if planning_mode == "Multi-day schedule":
+    st.subheader("Schedule Settings")
+
+    plan_days_count = st.selectbox(
+        "Plan length",
+        [3, 5, 7],
+        index=0,
+        format_func=lambda x: f"{x} days",
+        key="plan_days_count",
     )
-    region = st.selectbox("State / Region", region_options, key="region_select")
 
-    city_options = sorted(
-        locations.loc[
-            (locations["country"] == country) & (locations["region"] == region),
-            "city",
-        ].unique().tolist()
-    )
-    city = st.selectbox("City", city_options, key="city_select")
-
-    goal = st.selectbox(
-        "Primary goal",
-        ["General wellness", "Weight management", "Muscle gain", "High protein", "Better energy"],
-        key="goal_select",
+    target_mode = st.selectbox(
+        "Daily calorie target",
+        ["No target", "1,600 kcal", "2,000 kcal", "2,400 kcal", "Custom"],
+        key="daily_calorie_mode",
     )
 
-    diet = st.selectbox(
-        "Diet",
-        ["Vegetarian", "Vegan", "Eggetarian", "Non-vegetarian"],
-        key="diet_select",
-    )
-
-    restrictions = st.text_input(
-        "Allergies or foods to avoid",
-        placeholder="e.g., peanuts, mushrooms, lactose",
-        key="restrictions_input",
-    )
-
-    meals = st.multiselect(
-        "Meals to plan",
-        ["Breakfast", "Lunch", "Dinner", "Snacks"],
-        default=["Breakfast", "Lunch", "Dinner"],
-        key="meals_select",
-    )
-
-    st.subheader("How do you want to use NutriPilot?")
-
-    planning_mode = st.radio(
-        "Choose a planning mode",
-        ["Just one meal", "Multi-day schedule"],
-        horizontal=True,
-        key="planning_mode",
-        help="Choose one meal for an on-demand recommendation, or build a 3–7 day schedule.",
-    )
-
-    if planning_mode == "Multi-day schedule":
-        st.subheader("Schedule Settings")
-
-        plan_days_count = st.selectbox(
-            "Plan length",
-            [3, 5, 7],
-            index=0,
-            format_func=lambda x: f"{x} days",
-            key="plan_days_count",
+    if target_mode == "Custom":
+        calorie_target = st.number_input(
+            "Custom daily calories",
+            min_value=800, max_value=5000, value=2000, step=50,
+            key="custom_daily_calories",
         )
-
-        target_mode = st.selectbox(
-            "Daily calorie target",
-            ["No target", "1,600 kcal", "2,000 kcal", "2,400 kcal", "Custom"],
-            key="daily_calorie_mode",
-        )
-
-        if target_mode == "Custom":
-            calorie_target = st.number_input(
-                "Custom daily calories",
-                min_value=800, max_value=5000, value=2000, step=50,
-                key="custom_daily_calories",
-            )
-        elif target_mode == "1,600 kcal":
-            calorie_target = 1600
-        elif target_mode == "2,000 kcal":
-            calorie_target = 2000
-        elif target_mode == "2,400 kcal":
-            calorie_target = 2400
-        else:
-            calorie_target = None
-
-        protein_mode = st.selectbox(
-            "Daily protein target",
-            ["No target", "60 g", "90 g", "120 g", "Custom"],
-            key="daily_protein_mode",
-        )
-
-        if protein_mode == "Custom":
-            protein_target = st.number_input(
-                "Custom daily protein (g)",
-                min_value=20, max_value=300, value=90, step=5,
-                key="custom_daily_protein",
-            )
-        elif protein_mode == "60 g":
-            protein_target = 60
-        elif protein_mode == "90 g":
-            protein_target = 90
-        elif protein_mode == "120 g":
-            protein_target = 120
-        else:
-            protein_target = None
-
-        portion_flexibility = st.selectbox(
-            "Portion flexibility",
-            ["Standard (±25%)", "Tighter (±15%)"],
-            help="Adjusts the complete recipe serving size without changing ingredient ratios.",
-            key="portion_flexibility",
-        )
-        portion_adjustment = (
-            0.25 if portion_flexibility.startswith("Standard") else 0.15
-        )
-
-        st.caption(
-            "Targets are planning preferences you choose; NutriPilot does not prescribe "
-            "medical or therapeutic nutrition targets."
-        )
+    elif target_mode == "1,600 kcal":
+        calorie_target = 1600
+    elif target_mode == "2,000 kcal":
+        calorie_target = 2000
+    elif target_mode == "2,400 kcal":
+        calorie_target = 2400
     else:
-        # On-demand mode intentionally has no planning horizon or daily targets.
-        plan_days_count = 1
         calorie_target = None
+
+    protein_mode = st.selectbox(
+        "Daily protein target",
+        ["No target", "60 g", "90 g", "120 g", "Custom"],
+        key="daily_protein_mode",
+    )
+
+    if protein_mode == "Custom":
+        protein_target = st.number_input(
+            "Custom daily protein (g)",
+            min_value=20, max_value=300, value=90, step=5,
+            key="custom_daily_protein",
+        )
+    elif protein_mode == "60 g":
+        protein_target = 60
+    elif protein_mode == "90 g":
+        protein_target = 90
+    elif protein_mode == "120 g":
+        protein_target = 120
+    else:
         protein_target = None
-        portion_adjustment = 0.25
+
+    portion_flexibility = st.selectbox(
+        "Portion flexibility",
+        ["Standard (±25%)", "Tighter (±15%)"],
+        help="Adjusts the complete recipe serving size without changing ingredient ratios.",
+        key="portion_flexibility",
+    )
+    portion_adjustment = (
+        0.25 if portion_flexibility.startswith("Standard") else 0.15
+    )
+
+    st.caption(
+        "Targets are planning preferences you choose; NutriPilot does not prescribe "
+        "medical or therapeutic nutrition targets."
+    )
+else:
+    # On-demand mode intentionally has no planning horizon or daily targets.
+    plan_days_count = 1
+    calorie_target = None
+    protein_target = None
+    portion_adjustment = 0.25
+
 if st.button(
     "Load Local Context",
     type="primary",
+    icon=":material/location_on:",
     use_container_width=True,
     key="load_local_context",
 ):
@@ -1807,31 +1830,30 @@ context = st.session_state.location_context
 
 if profile and context:
     st.divider()
-    with st.container(border=True):
-        st.header("Your Local Context")
+    st.header("Your Local Context")
 
-        weather = context["weather"]
-        location = context["resolved_location"]
-        cols = st.columns(4)
+    weather = context["weather"]
+    location = context["resolved_location"]
+    cols = st.columns(4)
 
-        with cols[0]:
-            st.metric("Temperature", f"{weather['temperature_c']} °C")
-        with cols[1]:
-            st.metric("Feels like", f"{weather['apparent_temperature_c']} °C")
-        with cols[2]:
-            st.metric("Humidity", f"{weather['humidity_pct']}%")
-        with cols[3]:
-            st.metric("Wind", f"{weather['wind_kmh']} km/h")
+    with cols[0]:
+        st.metric("Temperature", f"{weather['temperature_c']} °C")
+    with cols[1]:
+        st.metric("Feels like", f"{weather['apparent_temperature_c']} °C")
+    with cols[2]:
+        st.metric("Humidity", f"{weather['humidity_pct']}%")
+    with cols[3]:
+        st.metric("Wind", f"{weather['wind_kmh']} km/h")
 
-        st.success(f"**{weather['condition']} · {context['season']}**")
-        st.write(f"**Location:** {location['name']}, {location['region']}, {location['country']}")
+    st.success(f"**{weather['condition']} · {context['season']}**")
+    st.write(f"**Location:** {location['name']}, {location['region']}, {location['country']}")
 
-        recipe_candidates = build_recipe_candidates(recipes, foods, profile, context)
+    recipe_candidates = build_recipe_candidates(recipes, foods, profile, context)
 
-        st.caption(
-            f"{len(recipe_candidates)} recipe candidates match the current "
-            "diet, restrictions, season and location context."
-        )
+    st.caption(
+        f"{len(recipe_candidates)} recipe candidates match the current "
+        "diet, restrictions, season and location context."
+    )
 
     with st.expander("View candidate recipe catalogue"):
         st.dataframe(
@@ -1840,7 +1862,7 @@ if profile and context:
             hide_index=True,
         )
 
-    with st.expander("Food data provenance"): 
+    with st.expander("Food data provenance"):
         st.caption(
             "Food composition is kept separate from recipe and AI logic. "
             "Each food record carries its source, source version, data basis and "
@@ -1882,6 +1904,7 @@ if profile and context:
         if st.button(
             "Recommend My Meal",
             type="primary",
+            icon=":material/restaurant:",
             use_container_width=True,
             key="recommend_single_meal",
         ):
@@ -1934,6 +1957,7 @@ if profile and context:
         if st.button(
             "Generate My Multi-Day Plan",
             type="primary",
+            icon=":material/auto_awesome:",
             use_container_width=True,
             key="generate_multi_day_plan",
         ):
@@ -1969,30 +1993,29 @@ if profile and context:
             st.subheader("Your Plan")
 
             for day in plan_days(plan):
-                with st.container(border=True):
-                    st.markdown(f"### Day {day['day']}")
-                    for meal in day["meals"]:
-                        nutrition = meal["nutrition"]
-                        st.markdown(
-                            f"**{meal['meal_type']}: {meal['name']}** · "
-                            f"{nutrition['calories_kcal']:.0f} kcal · "
-                            f"{nutrition['protein_g']:.1f} g protein · "
-                            f"{meal.get('total_time_min', 0)} min · "
-                            f"{meal.get('serving_multiplier', 1.0):.2f}× serving"
-                        )
-                        ingredient_text = ", ".join(
-                            f"{item['food']} ({item['grams']:.0f} g)"
-                            for item in meal["parsed_ingredients"]
-                        )
-                        st.caption(f"Ingredients: {ingredient_text}")
-                        if meal.get("why"):
-                            st.caption(meal["why"])
-
-                    st.info(
-                        f"Day {day['day']} total: "
-                        f"{day['totals']['calories_kcal']:.0f} kcal · "
-                        f"{day['totals']['protein_g']:.1f} g protein"
+                st.markdown(f"### Day {day['day']}")
+                for meal in day["meals"]:
+                    nutrition = meal["nutrition"]
+                    st.markdown(
+                        f"**{meal['meal_type']}: {meal['name']}** · "
+                        f"{nutrition['calories_kcal']:.0f} kcal · "
+                        f"{nutrition['protein_g']:.1f} g protein · "
+                        f"{meal.get('total_time_min', 0)} min · "
+                        f"{meal.get('serving_multiplier', 1.0):.2f}× serving"
                     )
+                    ingredient_text = ", ".join(
+                        f"{item['food']} ({item['grams']:.0f} g)"
+                        for item in meal["parsed_ingredients"]
+                    )
+                    st.caption(f"Ingredients: {ingredient_text}")
+                    if meal.get("why"):
+                        st.caption(meal["why"])
+
+                st.info(
+                    f"Day {day['day']} total: "
+                    f"{day['totals']['calories_kcal']:.0f} kcal · "
+                    f"{day['totals']['protein_g']:.1f} g protein"
+                )
 
             st.divider()
             st.header("Shopping List")
@@ -2000,6 +2023,7 @@ if profile and context:
             st.dataframe(shopping, use_container_width=True, hide_index=True)
             st.download_button(
                 "Download Shopping List (CSV)",
+                icon=":material/download:",
                 data=shopping.to_csv(index=False).encode("utf-8"),
                 file_name="nutripilot_shopping_list.csv",
                 mime="text/csv",
@@ -2026,6 +2050,7 @@ if profile and context:
                 with quick_actions[idx]:
                     if st.button(
                         label,
+                        icon=":material/arrow_forward:",
                         use_container_width=True,
                         key=f"quick_refinement_{idx}",
                     ):
