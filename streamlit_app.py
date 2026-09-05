@@ -1,5 +1,3 @@
-# NUTRIPILOT PHASE 8 FINAL — single-meal opt-out + multi-day planning
-# Source invariant: exactly one schedule-length widget in this source file.
 
 import json
 import re
@@ -10,7 +8,362 @@ import requests
 import streamlit as st
 from openai import OpenAI
 
-st.set_page_config(page_title="NutriPilot", page_icon="🥗", layout="centered")
+st.set_page_config(page_title="NutriPilot", page_icon="N", layout="wide")
+
+
+# -----------------------------------------------------------------------------
+# NutriPilot visual system
+# Palette: Cream #f3e8cc · Forest Green #18542a · Crisp Carrot #f96015
+# Keep the product logic below independent from the presentation layer.
+# -----------------------------------------------------------------------------
+st.markdown(
+    """
+    <style>
+    :root {
+        --np-cream: #f3e8cc;
+        --np-green: #18542a;
+        --np-carrot: #f96015;
+        --np-green-72: rgba(24, 84, 42, 0.72);
+        --np-green-55: rgba(24, 84, 42, 0.55);
+        --np-green-25: rgba(24, 84, 42, 0.25);
+        --np-green-14: rgba(24, 84, 42, 0.14);
+        --np-green-08: rgba(24, 84, 42, 0.08);
+        --np-carrot-14: rgba(249, 96, 21, 0.14);
+    }
+
+    /* Page canvas */
+    html, body, [data-testid="stAppViewContainer"],
+    [data-testid="stAppViewContainer"] > .main {
+        background: var(--np-cream) !important;
+    }
+
+    [data-testid="stHeader"] {
+        background: var(--np-cream) !important;
+        box-shadow: none !important;
+    }
+
+    [data-testid="stToolbar"] {
+        background: transparent !important;
+    }
+
+    .main .block-container {
+        max-width: 1120px;
+        padding: 4.5rem 2.25rem 5rem;
+    }
+
+    /* Global typography */
+    [data-testid="stAppViewContainer"] * {
+        font-family: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont,
+                     "Segoe UI", sans-serif;
+    }
+
+    [data-testid="stAppViewContainer"] h1,
+    [data-testid="stAppViewContainer"] h2,
+    [data-testid="stAppViewContainer"] h3,
+    [data-testid="stAppViewContainer"] h4 {
+        color: var(--np-green) !important;
+        font-weight: 700 !important;
+        letter-spacing: -0.035em;
+    }
+
+    [data-testid="stAppViewContainer"] h1 {
+        font-size: clamp(2.4rem, 5vw, 4.25rem) !important;
+        line-height: 1.02 !important;
+        margin-bottom: 0.45rem !important;
+    }
+
+    [data-testid="stAppViewContainer"] h2 {
+        font-size: clamp(1.65rem, 3vw, 2.35rem) !important;
+        line-height: 1.08 !important;
+        margin-top: 0.2rem !important;
+    }
+
+    [data-testid="stAppViewContainer"] h3 {
+        font-size: 1.35rem !important;
+        line-height: 1.15 !important;
+    }
+
+    [data-testid="stAppViewContainer"] p,
+    [data-testid="stAppViewContainer"] label,
+    [data-testid="stAppViewContainer"] li,
+    [data-testid="stAppViewContainer"] .stMarkdown,
+    [data-testid="stAppViewContainer"] .stCaption {
+        color: var(--np-green-72) !important;
+    }
+
+    [data-testid="stAppViewContainer"] strong {
+        color: var(--np-green) !important;
+    }
+
+    /* Remove Streamlit's default visual noise */
+    hr {
+        border: 0 !important;
+        border-top: 1px solid var(--np-green-25) !important;
+        margin: 2rem 0 !important;
+    }
+
+    [data-testid="stDecoration"] {
+        background: var(--np-green) !important;
+    }
+
+    /* Bordered containers become the primary card primitive */
+    [data-testid="stVerticalBlockBorderWrapper"] {
+        border: 1px solid var(--np-green-25) !important;
+        border-radius: 18px !important;
+        background: var(--np-cream) !important;
+        box-shadow: none !important;
+        padding: 0.35rem !important;
+    }
+
+    /* Inputs */
+    [data-baseweb="select"] > div,
+    [data-baseweb="input"] > div,
+    [data-baseweb="textarea"] > div,
+    [data-testid="stTextInput"] input,
+    [data-testid="stNumberInput"] input,
+    textarea {
+        background: var(--np-cream) !important;
+        color: var(--np-green) !important;
+        border-color: var(--np-green-25) !important;
+        border-radius: 10px !important;
+        box-shadow: none !important;
+    }
+
+    [data-baseweb="select"] > div:hover,
+    [data-baseweb="input"] > div:hover,
+    [data-baseweb="textarea"] > div:hover {
+        border-color: var(--np-green-55) !important;
+    }
+
+    [data-baseweb="select"] > div:focus-within,
+    [data-baseweb="input"] > div:focus-within,
+    [data-baseweb="textarea"] > div:focus-within,
+    input:focus,
+    textarea:focus {
+        border-color: var(--np-carrot) !important;
+        box-shadow: 0 0 0 1px var(--np-carrot) !important;
+    }
+
+    [data-baseweb="select"] svg {
+        fill: var(--np-green) !important;
+    }
+
+    [data-baseweb="popover"] {
+        background: var(--np-cream) !important;
+        border: 1px solid var(--np-green-25) !important;
+        border-radius: 12px !important;
+        box-shadow: none !important;
+    }
+
+    [role="option"] {
+        background: var(--np-cream) !important;
+        color: var(--np-green) !important;
+    }
+
+    [role="option"]:hover,
+    [aria-selected="true"] {
+        background: var(--np-carrot-14) !important;
+        color: var(--np-green) !important;
+    }
+
+    /* Radio / multiselect / slider active states */
+    [data-testid="stRadio"] label,
+    [data-testid="stCheckbox"] label,
+    [data-testid="stMultiSelect"] label {
+        color: var(--np-green) !important;
+    }
+
+    [data-testid="stRadio"] [aria-checked="true"] div,
+    [data-testid="stCheckbox"] [aria-checked="true"] div {
+        color: var(--np-carrot) !important;
+    }
+
+    [data-testid="stSlider"] [role="slider"] {
+        background: var(--np-carrot) !important;
+        border-color: var(--np-carrot) !important;
+    }
+
+    [data-testid="stSlider"] [data-baseweb="slider"] > div > div {
+        background: var(--np-green-25) !important;
+    }
+
+    /* Buttons: carrot only for primary CTAs; secondary actions stay green/cream */
+    div.stButton > button,
+    div.stDownloadButton > button,
+    [data-testid="stFormSubmitButton"] button {
+        min-height: 2.75rem;
+        border-radius: 10px !important;
+        border: 1px solid var(--np-green) !important;
+        background: var(--np-cream) !important;
+        color: var(--np-green) !important;
+        font-weight: 650 !important;
+        box-shadow: none !important;
+        transition: border-color 120ms ease, background 120ms ease,
+                    transform 120ms ease;
+    }
+
+    div.stButton > button:hover,
+    div.stDownloadButton > button:hover,
+    [data-testid="stFormSubmitButton"] button:hover {
+        background: var(--np-green-08) !important;
+        border-color: var(--np-green) !important;
+        color: var(--np-green) !important;
+        transform: translateY(-1px);
+    }
+
+    div.stButton > button:focus,
+    div.stDownloadButton > button:focus,
+    [data-testid="stFormSubmitButton"] button:focus {
+        box-shadow: 0 0 0 2px var(--np-carrot) !important;
+    }
+
+    div.stButton > button[kind="primary"],
+    div.stButton > button[data-testid="stBaseButton-primary"],
+    div.stDownloadButton > button[kind="primary"],
+    div.stDownloadButton > button[data-testid="stBaseButton-primary"] {
+        background: var(--np-carrot) !important;
+        border-color: var(--np-carrot) !important;
+        color: var(--np-cream) !important;
+    }
+
+    div.stButton > button[kind="primary"]:hover,
+    div.stButton > button[data-testid="stBaseButton-primary"]:hover,
+    div.stDownloadButton > button[kind="primary"]:hover,
+    div.stDownloadButton > button[data-testid="stBaseButton-primary"]:hover {
+        background: var(--np-carrot) !important;
+        border-color: var(--np-green) !important;
+        color: var(--np-cream) !important;
+    }
+
+    /* Metrics */
+    [data-testid="stMetric"] {
+        background: var(--np-cream) !important;
+        border: 1px solid var(--np-green-25) !important;
+        border-radius: 14px !important;
+        padding: 1rem 1.1rem !important;
+    }
+
+    [data-testid="stMetricLabel"] {
+        color: var(--np-green-55) !important;
+        font-size: 0.76rem !important;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+    }
+
+    [data-testid="stMetricValue"] {
+        color: var(--np-carrot) !important;
+        font-weight: 750 !important;
+        letter-spacing: -0.035em;
+    }
+
+    /* Context/status messages: retain semantic distinction without introducing colors */
+    [data-testid="stAlert"] {
+        background: var(--np-cream) !important;
+        border: 1px solid var(--np-green-25) !important;
+        border-left: 3px solid var(--np-carrot) !important;
+        border-radius: 12px !important;
+        color: var(--np-green) !important;
+        box-shadow: none !important;
+    }
+
+    [data-testid="stAlert"] * {
+        color: var(--np-green) !important;
+    }
+
+    /* Expanders */
+    [data-testid="stExpander"] {
+        border: 1px solid var(--np-green-25) !important;
+        border-radius: 14px !important;
+        background: var(--np-cream) !important;
+        box-shadow: none !important;
+    }
+
+    [data-testid="stExpander"] summary {
+        color: var(--np-green) !important;
+        font-weight: 650 !important;
+    }
+
+    /* Tabs, if introduced later */
+    [data-baseweb="tab-list"] {
+        gap: 0.4rem;
+        border-bottom: 1px solid var(--np-green-25) !important;
+    }
+
+    [data-baseweb="tab"] {
+        color: var(--np-green-55) !important;
+        background: transparent !important;
+    }
+
+    [data-baseweb="tab"][aria-selected="true"] {
+        color: var(--np-green) !important;
+        border-bottom: 2px solid var(--np-carrot) !important;
+    }
+
+    /* Chat */
+    [data-testid="stChatMessage"] {
+        background: var(--np-cream) !important;
+        border: 1px solid var(--np-green-14) !important;
+        border-radius: 14px !important;
+        margin-bottom: 0.65rem !important;
+    }
+
+    [data-testid="stChatInput"] {
+        background: var(--np-cream) !important;
+        border: 1px solid var(--np-green-25) !important;
+        border-radius: 14px !important;
+    }
+
+    [data-testid="stChatInput"] textarea {
+        border: 0 !important;
+        box-shadow: none !important;
+    }
+
+    /* Dataframes */
+    [data-testid="stDataFrame"] {
+        border: 1px solid var(--np-green-25) !important;
+        border-radius: 12px !important;
+        overflow: hidden !important;
+    }
+
+    /* Captions / footer */
+    [data-testid="stCaptionContainer"] {
+        color: var(--np-green-55) !important;
+    }
+
+    /* Sidebar is styled proactively even though the current app is main-column based. */
+    section[data-testid="stSidebar"] {
+        background: var(--np-cream) !important;
+        border-right: 1px solid var(--np-green-25) !important;
+    }
+
+    section[data-testid="stSidebar"] * {
+        color: var(--np-green) !important;
+    }
+
+    section[data-testid="stSidebar"] [data-baseweb="select"] > div,
+    section[data-testid="stSidebar"] [data-baseweb="input"] > div {
+        background: var(--np-cream) !important;
+        border-color: var(--np-green-25) !important;
+    }
+
+    /* Responsive spacing */
+    @media (max-width: 760px) {
+        .main .block-container {
+            padding: 2.25rem 1rem 3rem;
+        }
+
+        [data-testid="stAppViewContainer"] h1 {
+            font-size: 2.5rem !important;
+        }
+
+        [data-testid="stMetric"] {
+            padding: 0.8rem !important;
+        }
+    }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
 
 FOOD_DATA_PATH = "data/foods.csv"
 RECIPE_DATA_PATH = "data/recipes.csv"
@@ -1237,139 +1590,139 @@ if "plan_settings" not in st.session_state:
 if "single_meal" not in st.session_state:
     st.session_state.single_meal = None
 
-st.title("🥗 NutriPilot")
-st.caption("NutriPilot v8.5 FINAL · deterministic refinement constraints")
+st.title("NutriPilot")
+st.caption("Local · seasonal · AI-assisted meal planning")
 st.subheader("Your local, seasonal nutrition copilot.")
 st.write("Meal recommendations shaped by your goals, diet, location, season and current weather.")
 
 st.divider()
-st.header("👤 Your Profile")
+with st.container(border=True):
+    st.header("Your Profile")
 
-countries = sorted(locations["country"].unique().tolist())
-country = st.selectbox("Country", countries, key="country_select")
+    countries = sorted(locations["country"].unique().tolist())
+    country = st.selectbox("Country", countries, key="country_select")
 
-region_options = sorted(
-    locations.loc[locations["country"] == country, "region"].unique().tolist()
-)
-region = st.selectbox("State / Region", region_options, key="region_select")
+    region_options = sorted(
+        locations.loc[locations["country"] == country, "region"].unique().tolist()
+    )
+    region = st.selectbox("State / Region", region_options, key="region_select")
 
-city_options = sorted(
-    locations.loc[
-        (locations["country"] == country) & (locations["region"] == region),
-        "city",
-    ].unique().tolist()
-)
-city = st.selectbox("City", city_options, key="city_select")
+    city_options = sorted(
+        locations.loc[
+            (locations["country"] == country) & (locations["region"] == region),
+            "city",
+        ].unique().tolist()
+    )
+    city = st.selectbox("City", city_options, key="city_select")
 
-goal = st.selectbox(
-    "Primary goal",
-    ["General wellness", "Weight management", "Muscle gain", "High protein", "Better energy"],
-    key="goal_select",
-)
-
-diet = st.selectbox(
-    "Diet",
-    ["Vegetarian", "Vegan", "Eggetarian", "Non-vegetarian"],
-    key="diet_select",
-)
-
-restrictions = st.text_input(
-    "Allergies or foods to avoid",
-    placeholder="e.g., peanuts, mushrooms, lactose",
-    key="restrictions_input",
-)
-
-meals = st.multiselect(
-    "Meals to plan",
-    ["Breakfast", "Lunch", "Dinner", "Snacks"],
-    default=["Breakfast", "Lunch", "Dinner"],
-    key="meals_select",
-)
-
-st.subheader("🍽️ How do you want to use NutriPilot?")
-
-planning_mode = st.radio(
-    "Choose a planning mode",
-    ["Just one meal", "Multi-day schedule"],
-    horizontal=True,
-    key="planning_mode",
-    help="Choose one meal for an on-demand recommendation, or build a 3–7 day schedule.",
-)
-
-if planning_mode == "Multi-day schedule":
-    st.subheader("📅 Schedule Settings")
-
-    plan_days_count = st.selectbox(
-        "Plan length",
-        [3, 5, 7],
-        index=0,
-        format_func=lambda x: f"{x} days",
-        key="plan_days_count",
+    goal = st.selectbox(
+        "Primary goal",
+        ["General wellness", "Weight management", "Muscle gain", "High protein", "Better energy"],
+        key="goal_select",
     )
 
-    target_mode = st.selectbox(
-        "Daily calorie target",
-        ["No target", "1,600 kcal", "2,000 kcal", "2,400 kcal", "Custom"],
-        key="daily_calorie_mode",
+    diet = st.selectbox(
+        "Diet",
+        ["Vegetarian", "Vegan", "Eggetarian", "Non-vegetarian"],
+        key="diet_select",
     )
 
-    if target_mode == "Custom":
-        calorie_target = st.number_input(
-            "Custom daily calories",
-            min_value=800, max_value=5000, value=2000, step=50,
-            key="custom_daily_calories",
+    restrictions = st.text_input(
+        "Allergies or foods to avoid",
+        placeholder="e.g., peanuts, mushrooms, lactose",
+        key="restrictions_input",
+    )
+
+    meals = st.multiselect(
+        "Meals to plan",
+        ["Breakfast", "Lunch", "Dinner", "Snacks"],
+        default=["Breakfast", "Lunch", "Dinner"],
+        key="meals_select",
+    )
+
+    st.subheader("How do you want to use NutriPilot?")
+
+    planning_mode = st.radio(
+        "Choose a planning mode",
+        ["Just one meal", "Multi-day schedule"],
+        horizontal=True,
+        key="planning_mode",
+        help="Choose one meal for an on-demand recommendation, or build a 3–7 day schedule.",
+    )
+
+    if planning_mode == "Multi-day schedule":
+        st.subheader("Schedule Settings")
+
+        plan_days_count = st.selectbox(
+            "Plan length",
+            [3, 5, 7],
+            index=0,
+            format_func=lambda x: f"{x} days",
+            key="plan_days_count",
         )
-    elif target_mode == "1,600 kcal":
-        calorie_target = 1600
-    elif target_mode == "2,000 kcal":
-        calorie_target = 2000
-    elif target_mode == "2,400 kcal":
-        calorie_target = 2400
+
+        target_mode = st.selectbox(
+            "Daily calorie target",
+            ["No target", "1,600 kcal", "2,000 kcal", "2,400 kcal", "Custom"],
+            key="daily_calorie_mode",
+        )
+
+        if target_mode == "Custom":
+            calorie_target = st.number_input(
+                "Custom daily calories",
+                min_value=800, max_value=5000, value=2000, step=50,
+                key="custom_daily_calories",
+            )
+        elif target_mode == "1,600 kcal":
+            calorie_target = 1600
+        elif target_mode == "2,000 kcal":
+            calorie_target = 2000
+        elif target_mode == "2,400 kcal":
+            calorie_target = 2400
+        else:
+            calorie_target = None
+
+        protein_mode = st.selectbox(
+            "Daily protein target",
+            ["No target", "60 g", "90 g", "120 g", "Custom"],
+            key="daily_protein_mode",
+        )
+
+        if protein_mode == "Custom":
+            protein_target = st.number_input(
+                "Custom daily protein (g)",
+                min_value=20, max_value=300, value=90, step=5,
+                key="custom_daily_protein",
+            )
+        elif protein_mode == "60 g":
+            protein_target = 60
+        elif protein_mode == "90 g":
+            protein_target = 90
+        elif protein_mode == "120 g":
+            protein_target = 120
+        else:
+            protein_target = None
+
+        portion_flexibility = st.selectbox(
+            "Portion flexibility",
+            ["Standard (±25%)", "Tighter (±15%)"],
+            help="Adjusts the complete recipe serving size without changing ingredient ratios.",
+            key="portion_flexibility",
+        )
+        portion_adjustment = (
+            0.25 if portion_flexibility.startswith("Standard") else 0.15
+        )
+
+        st.caption(
+            "Targets are planning preferences you choose; NutriPilot does not prescribe "
+            "medical or therapeutic nutrition targets."
+        )
     else:
+        # On-demand mode intentionally has no planning horizon or daily targets.
+        plan_days_count = 1
         calorie_target = None
-
-    protein_mode = st.selectbox(
-        "Daily protein target",
-        ["No target", "60 g", "90 g", "120 g", "Custom"],
-        key="daily_protein_mode",
-    )
-
-    if protein_mode == "Custom":
-        protein_target = st.number_input(
-            "Custom daily protein (g)",
-            min_value=20, max_value=300, value=90, step=5,
-            key="custom_daily_protein",
-        )
-    elif protein_mode == "60 g":
-        protein_target = 60
-    elif protein_mode == "90 g":
-        protein_target = 90
-    elif protein_mode == "120 g":
-        protein_target = 120
-    else:
         protein_target = None
-
-    portion_flexibility = st.selectbox(
-        "Portion flexibility",
-        ["Standard (±25%)", "Tighter (±15%)"],
-        help="Adjusts the complete recipe serving size without changing ingredient ratios.",
-        key="portion_flexibility",
-    )
-    portion_adjustment = (
-        0.25 if portion_flexibility.startswith("Standard") else 0.15
-    )
-
-    st.caption(
-        "Targets are planning preferences you choose; NutriPilot does not prescribe "
-        "medical or therapeutic nutrition targets."
-    )
-else:
-    # On-demand mode intentionally has no planning horizon or daily targets.
-    plan_days_count = 1
-    calorie_target = None
-    protein_target = None
-    portion_adjustment = 0.25
-
+        portion_adjustment = 0.25
 if st.button(
     "Load Local Context",
     type="primary",
@@ -1454,30 +1807,31 @@ context = st.session_state.location_context
 
 if profile and context:
     st.divider()
-    st.header("🌦️ Your Local Context")
+    with st.container(border=True):
+        st.header("Your Local Context")
 
-    weather = context["weather"]
-    location = context["resolved_location"]
-    cols = st.columns(4)
+        weather = context["weather"]
+        location = context["resolved_location"]
+        cols = st.columns(4)
 
-    with cols[0]:
-        st.metric("Temperature", f"{weather['temperature_c']} °C")
-    with cols[1]:
-        st.metric("Feels like", f"{weather['apparent_temperature_c']} °C")
-    with cols[2]:
-        st.metric("Humidity", f"{weather['humidity_pct']}%")
-    with cols[3]:
-        st.metric("Wind", f"{weather['wind_kmh']} km/h")
+        with cols[0]:
+            st.metric("Temperature", f"{weather['temperature_c']} °C")
+        with cols[1]:
+            st.metric("Feels like", f"{weather['apparent_temperature_c']} °C")
+        with cols[2]:
+            st.metric("Humidity", f"{weather['humidity_pct']}%")
+        with cols[3]:
+            st.metric("Wind", f"{weather['wind_kmh']} km/h")
 
-    st.success(f"**{weather['condition']} · {context['season']}**")
-    st.write(f"**Location:** {location['name']}, {location['region']}, {location['country']}")
+        st.success(f"**{weather['condition']} · {context['season']}**")
+        st.write(f"**Location:** {location['name']}, {location['region']}, {location['country']}")
 
-    recipe_candidates = build_recipe_candidates(recipes, foods, profile, context)
+        recipe_candidates = build_recipe_candidates(recipes, foods, profile, context)
 
-    st.caption(
-        f"{len(recipe_candidates)} recipe candidates match the current "
-        "diet, restrictions, season and location context."
-    )
+        st.caption(
+            f"{len(recipe_candidates)} recipe candidates match the current "
+            "diet, restrictions, season and location context."
+        )
 
     with st.expander("View candidate recipe catalogue"):
         st.dataframe(
@@ -1486,7 +1840,7 @@ if profile and context:
             hide_index=True,
         )
 
-    with st.expander("🗃️ Food data provenance"):
+    with st.expander("Food data provenance"): 
         st.caption(
             "Food composition is kept separate from recipe and AI logic. "
             "Each food record carries its source, source version, data basis and "
@@ -1514,7 +1868,7 @@ if profile and context:
     }
 
     if settings.get("mode") == "Just one meal":
-        st.header("🍽️ On-Demand Meal")
+        st.header("On-Demand Meal")
         st.write(
             "Get one practical recommendation without creating a multi-day schedule."
         )
@@ -1571,7 +1925,7 @@ if profile and context:
             )
 
     else:
-        st.header("🤖 AI Meal Planner")
+        st.header("AI Meal Planner")
         st.write(
             "Build a multi-day plan from the validated recipe catalogue and optimize "
             "serving sizes against your selected targets."
@@ -1615,32 +1969,33 @@ if profile and context:
             st.subheader("Your Plan")
 
             for day in plan_days(plan):
-                st.markdown(f"### Day {day['day']}")
-                for meal in day["meals"]:
-                    nutrition = meal["nutrition"]
-                    st.markdown(
-                        f"**{meal['meal_type']}: {meal['name']}** · "
-                        f"{nutrition['calories_kcal']:.0f} kcal · "
-                        f"{nutrition['protein_g']:.1f} g protein · "
-                        f"{meal.get('total_time_min', 0)} min · "
-                        f"{meal.get('serving_multiplier', 1.0):.2f}× serving"
-                    )
-                    ingredient_text = ", ".join(
-                        f"{item['food']} ({item['grams']:.0f} g)"
-                        for item in meal["parsed_ingredients"]
-                    )
-                    st.caption(f"Ingredients: {ingredient_text}")
-                    if meal.get("why"):
-                        st.caption(meal["why"])
+                with st.container(border=True):
+                    st.markdown(f"### Day {day['day']}")
+                    for meal in day["meals"]:
+                        nutrition = meal["nutrition"]
+                        st.markdown(
+                            f"**{meal['meal_type']}: {meal['name']}** · "
+                            f"{nutrition['calories_kcal']:.0f} kcal · "
+                            f"{nutrition['protein_g']:.1f} g protein · "
+                            f"{meal.get('total_time_min', 0)} min · "
+                            f"{meal.get('serving_multiplier', 1.0):.2f}× serving"
+                        )
+                        ingredient_text = ", ".join(
+                            f"{item['food']} ({item['grams']:.0f} g)"
+                            for item in meal["parsed_ingredients"]
+                        )
+                        st.caption(f"Ingredients: {ingredient_text}")
+                        if meal.get("why"):
+                            st.caption(meal["why"])
 
-                st.info(
-                    f"Day {day['day']} total: "
-                    f"{day['totals']['calories_kcal']:.0f} kcal · "
-                    f"{day['totals']['protein_g']:.1f} g protein"
-                )
+                    st.info(
+                        f"Day {day['day']} total: "
+                        f"{day['totals']['calories_kcal']:.0f} kcal · "
+                        f"{day['totals']['protein_g']:.1f} g protein"
+                    )
 
             st.divider()
-            st.header("🛒 Shopping List")
+            st.header("Shopping List")
             shopping = build_shopping_list(plan)
             st.dataframe(shopping, use_container_width=True, hide_index=True)
             st.download_button(
@@ -1653,7 +2008,7 @@ if profile and context:
             )
 
             st.divider()
-            st.header("💬 Refine Your Plan")
+            st.header("Refine Your Plan")
             st.write(
                 "Ask NutriPilot to change part of the multi-day plan while keeping "
                 "the remaining meals intact."
@@ -1745,7 +2100,7 @@ if profile and context:
 
 
 if catalogue_errors:
-    with st.expander("⚠️ Data catalogue mismatch detected", expanded=True):
+    with st.expander("Data catalogue mismatch detected", expanded=True):
         st.error(
             "Some recipes reference ingredients that are missing from the deployed "
             "`data/foods.csv`. Replace the entire `data` folder with the one from the "
