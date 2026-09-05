@@ -12,51 +12,79 @@ NutriPilot is a product-oriented meal-planning application designed to eventuall
 - Current weather conditions
 - Nutrition data
 
-## Phase 2 — Nutrition & Local Food Data
+## Phase 3 — Season & Weather Context
 
-Phase 2 introduces the first structured food layer.
+Phase 3 connects the user's location to external geographic and weather data.
 
 ### What was added
 
-- `data/foods.csv` — starter food catalogue
-- Category filtering
-- Meal suitability filtering
-- Nutrition snapshot for individual foods
-- Nutrition fields for calories, protein, carbohydrates, fat and fiber
-- Season and region metadata
-- Diet metadata
-- `st.cache_data` for efficient local dataset loading
+- City/region/country geocoding
+- Latitude/longitude resolution
+- Automatic season inference
+- Live current weather
+- Temperature
+- Feels-like temperature
+- Relative humidity
+- Precipitation
+- Wind speed
+- Simple weather context such as Hot, Cold, Mild, Rainy or Thunderstorm
+- Cached API responses to reduce repeated requests
+- Graceful error handling when external services are unavailable
 
-The current starter catalogue contains **26 foods** spanning cereals, pulses, dairy, eggs, vegetables, fruits and nuts.
+### APIs
 
-### Important data decision
+NutriPilot uses Open-Meteo for this prototype:
 
-This starter CSV is intended for **product development and prototyping**, not as a clinical nutrition database.
+1. **Geocoding API**
+   - Converts a user-entered location into coordinates.
+   - Returns location hierarchy and timezone.
 
-For a production-quality version, the next data step should use a properly sourced nutrition database. USDA FoodData Central provides REST access to food/nutrient data and downloadable datasets. See the official documentation:
+2. **Weather Forecast API**
+   - Uses those coordinates to retrieve current conditions.
 
-- https://fdc.nal.usda.gov/api-guide/
-- https://fdc.nal.usda.gov/download-datasets/
+Open-Meteo documents both APIs at:
+- https://open-meteo.com/en/docs/geocoding-api
+- https://open-meteo.com/en/docs
 
-For India-specific research, the Indian Food Composition Tables (IFCT 2017) are published by the National Institute of Nutrition / ICMR and contain detailed Indian food-composition information. Before embedding that material into a distributed product, review the source's usage terms and permissions.
+The Open-Meteo public service currently states that no authentication is required for non-commercial use and provides a CC BY 4.0 data licence. Review its current terms before deploying a commercial product.
 
-## Product architecture
+## Season logic
+
+Season is intentionally derived rather than entered manually.
+
+For the prototype:
+
+- India uses a simplified food-oriented model:
+  - March–May → Summer
+  - June–September → Monsoon
+  - October–November → Post-monsoon
+  - December–February → Winter
+
+- Other locations use a hemisphere-based four-season model.
+
+This is a product heuristic, not a scientific climate classification. Later versions can replace it with region-specific seasonality and agricultural/local-produce data.
+
+## Current product flow
 
 ```text
-User Profile
-     ↓
-Location + Diet + Goal
-     ↓
-Food Catalogue
-     ↓
-Nutrition / Region / Season Filters
-     ↓
-Candidate Foods
+Country + Region + City
+          ↓
+     Geocoding API
+          ↓
+    Coordinates + TZ
+          ↓
+      Weather API
+          ↓
+ Temperature / Rain / Humidity / Wind
+          ↓
+       Season Logic
+          ↓
+    Local Context Object
 ```
 
-AI is intentionally **not** generating recommendations yet.
+That context is now available in Streamlit session state and is ready for the Phase 4 recommendation engine.
 
-The eventual architecture is:
+## Planned AI architecture
 
 ```text
 User Profile
@@ -73,12 +101,16 @@ Local + Seasonal Food Data
      ↓
 Nutrition Constraints
      ↓
+Candidate Meals
+     ↓
 AI Meal Planner
      ↓
 Breakfast / Lunch / Dinner / Snacks
      ↓
 Explanation + Iteration
 ```
+
+The LLM should **not** be responsible for inventing weather, season or nutrition facts. Those should come from deterministic/data-backed components.
 
 ## Run locally
 
@@ -89,18 +121,21 @@ streamlit run streamlit_app.py
 
 ## Tech Stack
 
+### Current
 - Python
 - Streamlit
 - Pandas
-- CSV data layer
+- Requests
+- Open-Meteo Geocoding API
+- Open-Meteo Weather API
+- CSV food data
 
-Planned:
-
+### Planned
 - OpenAI API / LLMs
-- Weather API
-- Nutrition database
+- Validated nutrition database
+- Local/seasonal produce data
 - Snowflake
-- REST APIs
+- Recommendation evaluation framework
 
 ## Roadmap
 
@@ -110,11 +145,11 @@ Collect location, diet, goals, restrictions and meal preferences.
 ### Phase 2 — Nutrition & Local Food Data ✅
 Create the structured food catalogue and filtering layer.
 
-### Phase 3 — Season & Weather Context
-Infer season from location/date and integrate live weather.
+### Phase 3 — Season & Weather Context ✅
+Resolve location, infer season and retrieve live weather.
 
 ### Phase 4 — AI Meal Recommendation
-Use an LLM to select and explain meal recommendations from structured candidates.
+Generate personalized breakfast, lunch, dinner and snack recommendations using the structured context and food data.
 
 ### Phase 5 — Conversational Refinement
 Support iterative requests such as:
@@ -126,7 +161,7 @@ Support iterative requests such as:
 > "Give me a cheaper breakfast."
 
 ### Phase 6 — Evaluation & Product Analytics
-Test constraint satisfaction, recommendation quality, hallucination resistance and personalization.
+Test constraint satisfaction, recommendation quality, hallucination resistance, local relevance and personalization.
 
 ## Safety
 
