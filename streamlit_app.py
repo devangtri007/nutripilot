@@ -1,6 +1,5 @@
 
 import json
-import re
 from datetime import datetime
 
 import pandas as pd
@@ -716,102 +715,113 @@ def build_shopping_list(plan):
 
 
 
-def _canonical_recipe_name(value):
-    """Normalize recipe names for robust matching across CSV/session versions."""
-    import unicodedata
-    value = unicodedata.normalize("NFKC", str(value or ""))
-    value = value.replace("&", " and ")
-    value = value.casefold()
-    return re.sub(r"[^a-z0-9]+", "", value)
-
-
-def _resolve_recipe_id(recipe_id, recipe_name, recipes):
-    """Resolve a recipe against the current catalogue without trusting the LLM."""
-    lookup = recipes.set_index("recipe_id")
-
-    # 1. Existing ID.
-    if recipe_id is not None and not pd.isna(recipe_id):
-        candidate = str(recipe_id).strip()
-        if candidate in lookup.index:
-            return candidate
-
-    # 2. Exact canonical name match.
-    target = _canonical_recipe_name(recipe_name)
-    if target:
-        matches = [
-            str(rid)
-            for rid, row in lookup.iterrows()
-            if _canonical_recipe_name(row.get("name")) == target
-        ]
-        if len(matches) == 1:
-            return matches[0]
-
-        # 3. Conservative fuzzy fallback for punctuation/wording drift.
-        from difflib import SequenceMatcher
-        scored = []
-        for rid, row in lookup.iterrows():
-            candidate_name = _canonical_recipe_name(row.get("name"))
-            if candidate_name:
-                scored.append((
-                    SequenceMatcher(None, target, candidate_name).ratio(),
-                    str(rid),
-                    str(row.get("name", "")),
-                ))
-        scored.sort(reverse=True)
-        if scored and scored[0][0] >= 0.90:
-            return scored[0][1]
-
-    return None
-
-
 def normalize_plan_recipe_ids(plan, recipes, foods):
-    """Convert any legacy/session-restored plan into a validated catalogue plan.
+    """Make plans from older app versions compatible with refinement.
 
-    A plan may come from an older app version where recipe_id was not persisted.
-    Resolve IDs from the recipe name, then rebuild every meal from recipes.csv so
-    nutrition and ingredients always come from the current catalogue.
+    Older session-state plans may contain recipe name/nutrition fields but no
+    recipe_id. Refinement requires a stable catalogue identifier, so recover it
+    deterministically from the recipe name and re-verify nutrition from the
+    catalogue.
     """
-    normalized_days = []
+    lookup = recipes.set_index("recipe_id")
+    name_to_id = {}
+    for recipe_id, row in lookup.iterrows():
+        name_to_id[str(row["name"]).strip().casefold()] = recipe_id
 
+    normalized_days = []
     for day in plan_days(plan):
         normalized_meals = []
         for meal in day.get("meals", []):
             meal_copy = dict(meal)
-            recipe_id = _resolve_recipe_id(
-                meal_copy.get("recipe_id"),
-                meal_copy.get("name", ""),
-                recipes,
-            )
+            recipe_id = meal_copy.get("recipe_id")
 
-            if recipe_id is None:
-                available = recipes["name"].astype(str).tolist()
-                sample = ", ".join(available[:8])
+            if recipe_id not in lookup.index:
+                name = str(meal_copy.get("name", "")).strip().casefold()
+                recipe_id = name_to_id.get(name)
+
+            if recipe_id not in lookup.index:
                 raise ValueError(
                     f"Could not match '{meal_copy.get('name', 'unknown meal')}' "
-                    "to the current recipe catalogue. The deployed data/recipes.csv "
-                    "may be stale or different from the file used to generate this plan. "
-                    f"Example current recipes: {sample}."
+                    "to a catalogue recipe. Generate the plan again before refining it."
                 )
 
-            recipe = recipes.loc[recipes["recipe_id"].astype(str) == str(recipe_id)].iloc[0].to_dict()
+            recipe = lookup.loc[recipe_id].to_dict()
             verified = calculate_recipe_nutrition(recipe, foods)
             verified["why"] = meal_copy.get("why", "")
             verified["tags"] = meal_copy.get("tags", [])
-            try:
-                verified["serving_multiplier"] = float(
-                    meal_copy.get("serving_multiplier", 1.0)
-                )
-            except (TypeError, ValueError):
-                verified["serving_multiplier"] = 1.0
+            verified["serving_multiplier"] = float(
+                meal_copy.get("serving_multiplier", 1.0)
+            )
             normalized_meals.append(verified)
 
         normalized_days.append({
-            "day": day.get("day"),
+            "day": day["day"],
             "meals": normalized_meals,
             "totals": nutrition_totals(normalized_meals),
         })
 
     return normalized_days
+
+def refinement_forbidden_ingredients(user_request):
+    """Extract simple global 'no/without X' ingredient constraints."""
+    request = str(user_request).lower()
+    found = []
+    patterns = [
+        r"\bno\s+([a-z][a-z &'-]{1,40}?)(?:\s+in\s+(?:the\s+)?plan|\s+please|$)",
+        r"\bwithout\s+([a-z][a-z &'-]{1,40}?)(?:\s+in\s+(?:the\s+)?plan|\s+please|$)",
+    ]
+    for pattern in patterns:
+        for match in re.finditer(pattern, request):
+            value = re.sub(r"\s+", " ", match.group(1)).strip(" .,!?")
+            if value and value not in found:
+                found.append(value)
+    return found
+
+
+def recipe_contains_any(recipe, forbidden):
+    ingredient_names = [
+        str(item["food"]).strip().lower()
+        for item in parse_ingredients(recipe["ingredients"])
+    ]
+    return any(
+        forbidden_item in ingredient
+        for forbidden_item in forbidden
+        for ingredient in ingredient_names
+    )
+
+
+def filter_refinement_candidates(recipe_candidates, user_request):
+    """Apply deterministic global ingredient exclusions before the LLM sees candidates."""
+    forbidden = refinement_forbidden_ingredients(user_request)
+    if not forbidden:
+        return recipe_candidates.copy(), forbidden
+
+    mask = ~recipe_candidates.apply(
+        lambda row: recipe_contains_any(row, forbidden), axis=1
+    )
+    return recipe_candidates.loc[mask].copy(), forbidden
+
+
+def choose_safe_replacement(recipe_candidates, meal_type, forbidden, current_recipe_ids):
+    """Deterministically choose a valid replacement when an LLM proposal is unsafe."""
+    pool = recipe_candidates[
+        recipe_candidates["meal_type"].eq(meal_type)
+    ].copy()
+
+    if forbidden:
+        pool = pool.loc[
+            ~pool.apply(lambda row: recipe_contains_any(row, forbidden), axis=1)
+        ].copy()
+
+    pool = pool.loc[~pool["recipe_id"].isin(set(current_recipe_ids))]
+    if pool.empty:
+        return None
+
+    # Prefer faster recipes, then higher protein, then catalogue order.
+    pool["_time"] = pd.to_numeric(pool["total_time_min"], errors="coerce").fillna(9999)
+    pool["_protein"] = pd.to_numeric(pool.get("protein_g", 0), errors="coerce").fillna(0)
+    return pool.sort_values(["_time", "_protein"], ascending=[True, False]).iloc[0]["recipe_id"]
+
 
 def refine_multi_day_plan(
     profile,
@@ -820,9 +830,18 @@ def refine_multi_day_plan(
     current_plan,
     user_request,
 ):
+    safe_candidates, forbidden = filter_refinement_candidates(
+        recipe_candidates, user_request
+    )
+    if safe_candidates.empty:
+        raise ValueError(
+            "No catalogue recipes can satisfy this refinement for the selected "
+            "diet, location, season and restrictions."
+        )
+
     candidate_records = [
         recipe_record_for_prompt(row)
-        for row in recipe_candidates.to_dict(orient="records")
+        for row in safe_candidates.to_dict(orient="records")
     ]
 
     # Compatibility layer: plans created before recipe_id was persisted may
@@ -902,6 +921,7 @@ Output:
             "user_profile": profile,
             "location_context": location_context,
             "user_request": user_request,
+            "deterministic_forbidden_ingredients": forbidden,
             "current_plan": current_records,
             "candidate_recipes": candidate_records,
         },
@@ -914,7 +934,7 @@ Output:
     return result
 
 
-def apply_plan_changes(raw_result, profile, recipes, foods, current_plan):
+def apply_plan_changes(raw_result, profile, recipes, foods, recipe_candidates, current_plan):
     lookup = recipes.set_index("recipe_id")
     current_plan = normalize_plan_recipe_ids(current_plan, recipes, foods)
     result = [
@@ -964,19 +984,28 @@ def apply_plan_changes(raw_result, profile, recipes, foods, current_plan):
                 f"Recipe {recipe_id} is {recipe['meal_type']}, not {meal_type}."
             )
 
-        # Deterministic guard for the common "no rice" refinement.
-        request_text = str(raw_result.get("_user_request", "")).lower()
-        # The caller can attach the original request; otherwise the AI output
-        # remains governed by the catalogue-only prompt.
-        if "no rice" in request_text or "without rice" in request_text:
-            ingredient_names = [
-                item["food"].lower()
-                for item in parse_ingredients(recipe["ingredients"])
+        # Deterministic refinement constraint handling. If the model ignored a
+        # global exclusion, repair the proposal with a safe catalogue recipe
+        # instead of failing the entire refinement.
+        request_text = str(raw_result.get("_user_request", ""))
+        forbidden = refinement_forbidden_ingredients(request_text)
+        if forbidden and recipe_contains_any(recipe, forbidden):
+            current_recipe_ids = [
+                m.get("recipe_id")
+                for d in result
+                for m in d.get("meals", [])
+                if m.get("recipe_id")
             ]
-            if any("rice" in ingredient for ingredient in ingredient_names):
+            fallback_id = choose_safe_replacement(
+                recipe_candidates, meal_type, forbidden, current_recipe_ids
+            )
+            if fallback_id is None:
                 raise ValueError(
-                    f"Recipe {recipe_id} contains rice and cannot satisfy the no-rice request."
+                    f"No safe catalogue replacement is available for {meal_type} "
+                    f"under the requested constraint(s): {', '.join(forbidden)}."
                 )
+            recipe_id = fallback_id
+            recipe = lookup.loc[recipe_id].to_dict()
 
         verified = calculate_recipe_nutrition(recipe, foods)
         verified["why"] = change.get("reason", "")
@@ -989,6 +1018,47 @@ def apply_plan_changes(raw_result, profile, recipes, foods, current_plan):
                 break
 
         day["totals"] = nutrition_totals(day["meals"])
+
+    # Global constraint repair: phrases such as "No rice in the plan" apply
+    # to the whole plan, not just one meal. Ensure every remaining violating
+    # meal is replaced deterministically.
+    request_text = str(raw_result.get("_user_request", ""))
+    forbidden = refinement_forbidden_ingredients(request_text)
+    if forbidden:
+        for day in result:
+            for idx, meal in enumerate(day.get("meals", [])):
+                recipe = lookup.loc[meal["recipe_id"]].to_dict()
+                if not recipe_contains_any(recipe, forbidden):
+                    continue
+
+                current_recipe_ids = [
+                    m.get("recipe_id")
+                    for d in result
+                    for m in d.get("meals", [])
+                    if m.get("recipe_id")
+                ]
+                fallback_id = choose_safe_replacement(
+                    recipe_candidates,
+                    meal["meal_type"],
+                    forbidden,
+                    current_recipe_ids,
+                )
+                if fallback_id is None:
+                    raise ValueError(
+                        f"No safe catalogue replacement is available for "
+                        f"{meal['meal_type']} under: {', '.join(forbidden)}."
+                    )
+
+                fallback_recipe = lookup.loc[fallback_id].to_dict()
+                verified = calculate_recipe_nutrition(fallback_recipe, foods)
+                verified["why"] = (
+                    f"Replaced to satisfy: no {', '.join(forbidden)}."
+                )
+                verified["tags"] = ["refined", "constraint-validated"]
+                verified["serving_multiplier"] = 1.0
+                day["meals"][idx] = verified
+
+            day["totals"] = nutrition_totals(day["meals"])
 
     return result
 
@@ -1014,7 +1084,7 @@ if "single_meal" not in st.session_state:
     st.session_state.single_meal = None
 
 st.title("🥗 NutriPilot")
-st.caption("NutriPilot v8.4 FINAL · refinement compatibility fix")
+st.caption("NutriPilot v8.5 FINAL · deterministic refinement constraints")
 st.subheader("Your local, seasonal nutrition copilot.")
 st.write("Meal recommendations shaped by your goals, diet, location, season and current weather.")
 
@@ -1467,6 +1537,7 @@ if profile and context:
                             profile,
                             recipes,
                             foods,
+                            recipe_candidates,
                             st.session_state.meal_plan,
                         )
 
