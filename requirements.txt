@@ -1,2 +1,1 @@
-#requirements.txt
-snowflake-connector-python
+streamlit>=1.36,<2.0

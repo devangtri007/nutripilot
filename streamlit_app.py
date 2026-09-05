@@ -1,77 +1,169 @@
-import streamlit
-import pandas
-import requests
-import snowflake.connector
-from urllib.error import URLError
+import streamlit as st
 
-streamlit.title('My Parents New Healthy Diner')
+st.set_page_config(
+    page_title="NutriPilot",
+    page_icon="🥗",
+    layout="centered",
+)
 
-streamlit.header('Breakfast Menu')
-streamlit.text('🥣 Omega 3 & Blueberry Oatmeal')
-streamlit.text('🥗 Kale, Spinach & Rocket Smoothie')
-streamlit.text('🐔 Hard-Boiled Free-Range Egg')
+# -----------------------------
+# Session state
+# -----------------------------
+if "user_profile" not in st.session_state:
+    st.session_state.user_profile = None
 
-streamlit.header('🍌🥭 Build Your Own Fruit Smoothie 🥝🍇')
+# -----------------------------
+# Header
+# -----------------------------
+st.title("🥗 NutriPilot")
+st.subheader("Your local, seasonal nutrition copilot.")
 
-#import pandas
-my_fruit_list = pandas.read_csv("https://uni-lab-files.s3.us-west-2.amazonaws.com/dabw/fruit_macros.txt")
-my_fruit_list = my_fruit_list.set_index('Fruit')
+st.write(
+    "Tell us a little about yourself and where you live. "
+    "NutriPilot will use this profile in later phases to create "
+    "personalized meal recommendations."
+)
 
-# Let's put a pick list here so they can pick the fruit they want to include 
-fruits_selected = streamlit.multiselect("Pick some fruits:", list(my_fruit_list.index),['Avocado','Strawberries'])
-fruits_to_show = my_fruit_list.loc[fruits_selected]
+st.divider()
 
-# Display the table on the page
-streamlit.dataframe(my_fruit_list)
+# -----------------------------
+# Profile form
+# -----------------------------
+st.header("Let's personalize your recommendations")
 
-# create the repeatable code block (called a fuction)
-def get_fruityvice_data(this_fruit_choice):
-  fruityvice_response = requests.get("https://fruityvice.com/api/fruit/"+ this_fruit_choice)
-  fruityvice_normalized = pandas.json_normalize(fruityvice_response.json())
-  return fruityvice_normalized
+with st.form("profile_form"):
+    st.markdown("### 📍 Where are you based?")
 
-#New section to display fruityvice api response
-streamlit.header("Fruityvice Fruit Advice!")
-try:
-  fruit_choice = streamlit.text_input('What fruit would you like information about?')
-  if not fruit_choice:
-    streamlit.error("Please select a fruit to get information.")
-  else:
-    back_from_function = get_fruityvice_data(fruit_choice)
-    streamlit.dataframe(back_from_function)
+    country = st.text_input(
+        "Country",
+        placeholder="e.g., India",
+    )
 
-except URLError as e:
-  streamlit.error()
+    region = st.text_input(
+        "State / Region",
+        placeholder="e.g., Uttar Pradesh",
+    )
 
+    city = st.text_input(
+        "City",
+        placeholder="e.g., Kanpur",
+    )
 
-#import snowflake.connector
-streamlit.header("View Our Fruit List - Add Your Favorites!")
-#snowflake-related functions
-def get_fruit_load_list():
-  with my_cnx.cursor() as my_cur:
-    my_cur.execute("select * from pc_rivery_db.public.fruit_load_list")
-    return my_cur.fetchall()
+    st.markdown("### 🎯 What's your primary goal?")
 
-#Add a button to load the fruit
-if streamlit.button('Get Fruit List'):
-  my_cnx = snowflake.connector.connect(**streamlit.secrets["snowflake"])
-  my_data_rows = get_fruit_load_list()
-  my_cnx.close()
-  streamlit.dataframe(my_data_rows)
+    goal = st.selectbox(
+        "Choose one",
+        [
+            "General wellness",
+            "Weight management",
+            "Muscle gain",
+            "High protein",
+            "Better energy",
+        ],
+    )
 
+    st.markdown("### 🥗 What's your diet?")
 
+    diet = st.selectbox(
+        "Choose your diet",
+        [
+            "Vegetarian",
+            "Vegan",
+            "Eggetarian",
+            "Non-vegetarian",
+        ],
+    )
 
-# Allow the end user to add a fruit to the list
-def insert_row_snowflake(new_fruit):
-  with my_cnx.cursor() as my_cur:
-    my_cur.execute("insert into fruit_load_list values ('"+new_fruit+"')")
-    return "Thanks for adding" + new_fruit
-    
-add_my_fruit = streamlit.text_input('What fruit would you like to add?')
-if streamlit.button('Add a Fruit to the List'):
-  my_cnx = snowflake.connector.connect(**streamlit.secrets["snowflake"])
-  back_from_function = insert_row_snowflake(add_my_fruit)
-  my_cnx.close()
-  streamlit.text(back_from_function)
+    st.markdown("### 🚫 Anything you'd like to avoid?")
 
-streamlit.stop()
+    restrictions = st.text_input(
+        "Allergies or foods you avoid",
+        placeholder="e.g., peanuts, mushrooms, lactose",
+    )
+
+    st.markdown("### 🍽️ Which meals should NutriPilot help with?")
+
+    meals = st.multiselect(
+        "Select one or more",
+        ["Breakfast", "Lunch", "Dinner", "Snacks"],
+        default=["Breakfast", "Lunch", "Dinner"],
+    )
+
+    submitted = st.form_submit_button(
+        "Create My Profile",
+        type="primary",
+        use_container_width=True,
+    )
+
+# -----------------------------
+# Validation + save
+# -----------------------------
+if submitted:
+    missing = []
+
+    if not country.strip():
+        missing.append("Country")
+    if not region.strip():
+        missing.append("State / Region")
+    if not city.strip():
+        missing.append("City")
+    if not meals:
+        missing.append("at least one meal")
+
+    if missing:
+        st.error(
+            "Please provide: " + ", ".join(missing) + "."
+        )
+    else:
+        st.session_state.user_profile = {
+            "country": country.strip(),
+            "region": region.strip(),
+            "city": city.strip(),
+            "goal": goal,
+            "diet": diet,
+            "restrictions": restrictions.strip(),
+            "meals": meals,
+        }
+
+        st.success("Your NutriPilot profile is ready!")
+
+# -----------------------------
+# Profile summary
+# -----------------------------
+if st.session_state.user_profile:
+    profile = st.session_state.user_profile
+
+    st.divider()
+    st.header("Your Profile")
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+        st.metric("Location", f"{profile['city']}, {profile['region']}")
+        st.write(f"**Country:** {profile['country']}")
+        st.write(f"**Diet:** {profile['diet']}")
+
+    with col2:
+        st.write(f"**Goal:** {profile['goal']}")
+        st.write(
+            f"**Meals:** {', '.join(profile['meals'])}"
+        )
+        st.write(
+            f"**Avoid:** {profile['restrictions'] or 'Nothing specified'}"
+        )
+
+    st.info(
+        "Coming next: NutriPilot will use your location, "
+        "season, local produce and weather to personalize "
+        "your meal recommendations."
+    )
+
+    if st.button("Reset Profile", use_container_width=True):
+        st.session_state.user_profile = None
+        st.rerun()
+
+# -----------------------------
+# Phase indicator
+# -----------------------------
+st.divider()
+st.caption("NutriPilot · Phase 1 — Personalized Profile")
