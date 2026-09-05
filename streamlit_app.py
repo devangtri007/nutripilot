@@ -275,6 +275,7 @@ def calculate_recipe_nutrition(recipe, foods):
 
 
 
+
 def recipe_record_for_prompt(recipe):
     return {
         "recipe_id": recipe["recipe_id"],
@@ -299,7 +300,6 @@ def call_json_model(system_prompt, user_payload):
         raise RuntimeError("OPENAI_API_KEY is missing. Add it to Streamlit secrets.")
 
     client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
-
     response = client.chat.completions.create(
         model="gpt-4o-mini",
         temperature=0.2,
@@ -340,13 +340,178 @@ def all_plan_meals(plan):
     return meals
 
 
+def calculate_scaled_recipe_nutrition(recipe, foods, serving_multiplier=1.0):
+    """Phase 7: scale a complete validated recipe and calculate nutrition."""
+    multiplier = float(serving_multiplier)
+    if multiplier <= 0:
+        raise ValueError("Serving multiplier must be positive.")
+
+    lookup = foods.set_index("food")
+    totals = {
+        "calories_kcal": 0.0,
+        "protein_g": 0.0,
+        "carbs_g": 0.0,
+        "fat_g": 0.0,
+        "fiber_g": 0.0,
+    }
+    verified = []
+
+    for item in parse_ingredients(recipe["ingredients"]):
+        food = item["food"]
+        grams = float(item["grams"]) * multiplier
+
+        if food not in lookup.index:
+            raise ValueError(
+                f"Recipe '{recipe.get('name', recipe.get('recipe_id', 'unknown'))}' "
+                f"contains '{food}', but that ingredient is missing from data/foods.csv."
+            )
+
+        row = lookup.loc[food]
+        factor = grams / 100
+        for field in totals:
+            totals[field] += float(row[field]) * factor
+
+        verified.append({"food": food, "grams": round(grams, 1)})
+
+    result = recipe.copy()
+    result["parsed_ingredients"] = verified
+    result["serving_multiplier"] = round(multiplier, 2)
+    result["nutrition"] = {key: round(value, 1) for key, value in totals.items()}
+    return result
+
+
+def portion_objective(nutrition, calorie_target, protein_target, multiplier):
+    score = 0.0
+
+    if calorie_target:
+        score += (
+            abs(nutrition["calories_kcal"] - float(calorie_target))
+            / max(float(calorie_target), 1.0)
+        ) ** 2
+
+    if protein_target:
+        score += (
+            abs(nutrition["protein_g"] - float(protein_target))
+            / max(float(protein_target), 1.0)
+        ) ** 2
+
+    # Keep the solution near the standard recipe serving unless adjustment helps.
+    score += 0.10 * (float(multiplier) - 1.0) ** 2
+    return score
+
+
+def optimize_day_portions(
+    day,
+    foods,
+    calorie_target,
+    protein_target,
+    max_adjustment=0.25,
+):
+    """Phase 7: deterministic, bounded portion optimization."""
+    if not calorie_target and not protein_target:
+        meals = []
+        for meal in day["meals"]:
+            candidate = meal.copy()
+            candidate["serving_multiplier"] = 1.0
+            meals.append(candidate)
+        return {
+            "day": day["day"],
+            "meals": meals,
+            "totals": nutrition_totals(meals),
+        }
+
+    lower = max(0.50, 1.0 - float(max_adjustment))
+    upper = 1.0 + float(max_adjustment)
+    grid = [
+        round(lower + i * 0.05, 2)
+        for i in range(int(round((upper - lower) / 0.05)) + 1)
+    ]
+
+    meals = []
+    for meal in day["meals"]:
+        best = None
+        best_score = float("inf")
+        for multiplier in grid:
+            candidate = calculate_scaled_recipe_nutrition(
+                meal, foods, multiplier
+            )
+            score = portion_objective(
+                candidate["nutrition"],
+                calorie_target,
+                protein_target,
+                multiplier,
+            )
+            if score < best_score:
+                best_score = score
+                best = candidate
+        meals.append(best)
+
+    # A few coordinate-descent passes optimize each meal in the context of the day.
+    for _ in range(3):
+        changed = False
+        for meal_index, meal in enumerate(meals):
+            other = meals[:meal_index] + meals[meal_index + 1:]
+            other_totals = nutrition_totals(other)
+            best = meal
+            best_score = float("inf")
+
+            for multiplier in grid:
+                candidate = calculate_scaled_recipe_nutrition(
+                    meal, foods, multiplier
+                )
+                combined = dict(other_totals)
+                for key in combined:
+                    combined[key] += candidate["nutrition"][key]
+
+                score = portion_objective(
+                    combined,
+                    calorie_target,
+                    protein_target,
+                    multiplier,
+                )
+                if score < best_score:
+                    best_score = score
+                    best = candidate
+
+            if best["serving_multiplier"] != meal["serving_multiplier"]:
+                changed = True
+            meals[meal_index] = best
+
+        if not changed:
+            break
+
+    return {
+        "day": day["day"],
+        "meals": meals,
+        "totals": nutrition_totals(meals),
+    }
+
+
+def optimize_plan_portions(
+    plan,
+    foods,
+    calorie_target,
+    protein_target,
+    max_adjustment=0.25,
+):
+    return [
+        optimize_day_portions(
+            day,
+            foods,
+            calorie_target,
+            protein_target,
+            max_adjustment,
+        )
+        for day in plan_days(plan)
+    ]
+
+
 def validate_plan_response(raw_plan, profile, recipes, foods):
     lookup = recipes.set_index("recipe_id")
-    verified_days = []
-    requested_meals = profile["meals"]
-
     if not isinstance(raw_plan.get("days"), list):
         raise ValueError("AI did not return a valid multi-day plan.")
+
+    verified_days = []
 
     for day_index, day in enumerate(raw_plan["days"], start=1):
         verified_meals = []
@@ -356,10 +521,12 @@ def validate_plan_response(raw_plan, profile, recipes, foods):
             meal_type = item.get("meal")
             recipe_id = item.get("recipe_id")
 
-            if meal_type not in requested_meals:
+            if meal_type not in profile["meals"]:
                 raise ValueError(f"AI returned an unrequested meal: {meal_type}")
             if meal_type in seen_meals:
-                raise ValueError(f"Duplicate meal type on Day {day_index}: {meal_type}")
+                raise ValueError(
+                    f"Duplicate meal type on Day {day_index}: {meal_type}"
+                )
             if recipe_id not in lookup.index:
                 raise ValueError(f"AI returned unsupported recipe_id: {recipe_id}")
 
@@ -372,59 +539,23 @@ def validate_plan_response(raw_plan, profile, recipes, foods):
             verified = calculate_recipe_nutrition(recipe, foods)
             verified["why"] = item.get("why", "")
             verified["tags"] = item.get("tags", [])
-            seen_meals.add(meal_type)
+            verified["serving_multiplier"] = 1.0
             verified_meals.append(verified)
+            seen_meals.add(meal_type)
 
-        if set(requested_meals) != seen_meals:
-            missing = [m for m in requested_meals if m not in seen_meals]
-            raise ValueError(f"Day {day_index} is missing meals: {', '.join(missing)}")
+        if set(profile["meals"]) != seen_meals:
+            missing = [m for m in profile["meals"] if m not in seen_meals]
+            raise ValueError(
+                f"Day {day_index} is missing meals: {', '.join(missing)}"
+            )
 
-        day_result = {
+        verified_days.append({
             "day": day_index,
             "meals": verified_meals,
             "totals": nutrition_totals(verified_meals),
-        }
-        verified_days.append(day_result)
-
-    if not verified_days:
-        raise ValueError("No days were returned.")
+        })
 
     return verified_days
-
-
-def recipe_is_allowed(recipe, profile):
-    if not diet_allows(recipe["diet"], profile["diet"]):
-        return False
-
-    restrictions = [
-        item.strip().lower()
-        for item in profile["restrictions"].split(",")
-        if item.strip()
-    ]
-    ingredient_names = [x["food"].lower() for x in parse_ingredients(recipe["ingredients"])]
-
-    return not any(
-        any(restriction in ingredient for ingredient in ingredient_names)
-        for restriction in restrictions
-    )
-
-
-def deterministic_plan_score(plan, calorie_target, protein_target):
-    """Score a plan using user-selected targets and variety, not medical assumptions."""
-    score = 0.0
-    used = []
-
-    for day in plan:
-        totals = day["totals"]
-        if calorie_target:
-            score -= abs(totals["calories_kcal"] - calorie_target) / max(calorie_target, 1) * 30
-        if protein_target:
-            score -= abs(totals["protein_g"] - protein_target) / max(protein_target, 1) * 30
-        used.extend(meal["recipe_id"] for meal in day["meals"])
-
-    duplicates = len(used) - len(set(used))
-    score -= duplicates * 8
-    return score
 
 
 def generate_multi_day_plan(
@@ -453,12 +584,11 @@ Rules:
 1. Never invent recipes, ingredients, quantities, nutrition values, or cooking steps.
 2. Respect the user's diet and foods to avoid.
 3. Include exactly one recipe for every requested meal type on every day.
-4. Avoid repeating the same recipe across days unless the catalogue makes variety impossible.
+4. Avoid repeating the same recipe across days unless variety is impossible.
 5. Prefer seasonal, location-relevant and weather-compatible recipes.
-6. Use the user's goal and their explicitly supplied nutrition targets as ranking signals.
+6. Use the user's goal and explicitly supplied nutrition targets as ranking signals.
 7. Nutrition targets are user-selected planning preferences, not medical prescriptions.
-8. If no target is supplied, focus on balanced variety rather than guessing a target.
-9. Return valid JSON only.
+8. Return valid JSON only.
 
 Output:
 {
@@ -470,41 +600,39 @@ Output:
           "meal": "Breakfast",
           "recipe_id": "R001",
           "why": "Short reason.",
-          "tags": ["seasonal", "variety"]
+          "tags": ["seasonal", "goal-fit"]
         }
       ]
     }
   ]
 }
 """
-
-    payload = {
-        "user_profile": profile,
-        "location_context": location_context,
-        "plan_days": plan_days_count,
-        "daily_calorie_target_kcal": calorie_target,
-        "daily_protein_target_g": protein_target,
-        "candidate_recipes": candidate_records,
-    }
-
-    # Ask the model once for the complete plan, then validate it deterministically.
-    raw = call_json_model(system_prompt, payload)
+    raw = call_json_model(
+        system_prompt,
+        {
+            "user_profile": profile,
+            "location_context": location_context,
+            "plan_days": plan_days_count,
+            "daily_calorie_target_kcal": calorie_target,
+            "daily_protein_target_g": protein_target,
+            "candidate_recipes": candidate_records,
+        },
+    )
     return validate_plan_response(raw, profile, recipes, foods)
 
 
 def build_shopping_list(plan):
     shopping = {}
-
     for meal in all_plan_meals(plan):
         for item in meal["parsed_ingredients"]:
-            name = item["food"]
-            shopping[name] = shopping.get(name, 0) + float(item["grams"])
+            shopping[item["food"]] = (
+                shopping.get(item["food"], 0) + float(item["grams"])
+            )
 
-    rows = [
+    return pd.DataFrame([
         {"Ingredient": name, "Total quantity (g)": round(grams)}
         for name, grams in sorted(shopping.items())
-    ]
-    return pd.DataFrame(rows)
+    ])
 
 
 def refine_multi_day_plan(
@@ -513,17 +641,14 @@ def refine_multi_day_plan(
     recipe_candidates,
     current_plan,
     user_request,
-    foods,
-    recipes,
 ):
     candidate_records = [
         recipe_record_for_prompt(row)
         for row in recipe_candidates.to_dict(orient="records")
     ]
 
-    current_records = []
-    for day in plan_days(current_plan):
-        current_records.append({
+    current_records = [
+        {
             "day": day["day"],
             "meals": [
                 {
@@ -536,41 +661,41 @@ def refine_multi_day_plan(
                 for meal in day["meals"]
             ],
             "totals": day["totals"],
-        })
+        }
+        for day in plan_days(current_plan)
+    ]
 
     system_prompt = """
 You are NutriPilot's multi-day conversational refinement engine.
 
-The user already has a multi-day meal plan. Interpret the latest request and
-change only what is necessary.
+The user already has a multi-day plan.
 
 Rules:
 1. Select ONLY recipe_id values from candidate_recipes.
 2. Never invent recipes, ingredients, quantities, nutrition values, or cooking steps.
 3. Respect diet and foods to avoid.
-4. Keep unchanged meals unchanged unless the request requires a change.
-5. If a specific day/meal is mentioned, change only that meal.
-6. If the user asks for a constraint such as "under 20 minutes", use total_time_min.
-7. For "higher protein", prefer recipes with stronger protein fit.
-8. For "no rice", never select recipes containing rice.
-9. Avoid introducing unnecessary recipe repetition.
-10. If the request cannot be satisfied from the catalogue, return no changes.
+4. Keep meals unchanged unless the request requires a change.
+5. If a day/meal is mentioned, change only that meal.
+6. Use total_time_min for time constraints.
+7. For higher protein, prefer stronger protein-fit recipes.
+8. For no rice, never select a recipe containing rice.
+9. Avoid unnecessary repetition.
+10. If the request cannot be satisfied, return no changes.
 11. Return valid JSON only.
 
 Output:
 {
-  "assistant_message": "Short natural-language response.",
+  "assistant_message": "Short response.",
   "changes": [
     {
       "day": 2,
       "meal": "Dinner",
       "recipe_id": "R031",
-      "reason": "Why this replacement satisfies the request."
+      "reason": "Why this replacement works."
     }
   ]
 }
 """
-
     return call_json_model(
         system_prompt,
         {
@@ -586,26 +711,26 @@ Output:
 def apply_plan_changes(raw_result, profile, recipes, foods, current_plan):
     lookup = recipes.set_index("recipe_id")
     result = [
-        {"day": day["day"], "meals": list(day["meals"]), "totals": dict(day["totals"])}
+        {
+            "day": day["day"],
+            "meals": list(day["meals"]),
+            "totals": dict(day["totals"]),
+        }
         for day in plan_days(current_plan)
     ]
 
-    changes = raw_result.get("changes", [])
-    if not isinstance(changes, list):
-        raise ValueError("Invalid change response.")
-
-    for change in changes:
+    for change in raw_result.get("changes", []):
         day_number = int(change.get("day"))
         meal_type = change.get("meal")
         recipe_id = change.get("recipe_id")
 
         day = next((d for d in result if d["day"] == day_number), None)
         if day is None:
-            raise ValueError(f"AI tried to modify an unknown day: {day_number}")
+            raise ValueError(f"Unknown day: {day_number}")
         if meal_type not in profile["meals"]:
-            raise ValueError(f"AI tried to modify an unrequested meal: {meal_type}")
+            raise ValueError(f"Unrequested meal: {meal_type}")
         if recipe_id not in lookup.index:
-            raise ValueError(f"AI returned unsupported recipe_id: {recipe_id}")
+            raise ValueError(f"Unsupported recipe_id: {recipe_id}")
 
         recipe = lookup.loc[recipe_id].to_dict()
         if recipe["meal_type"] != meal_type:
@@ -616,16 +741,12 @@ def apply_plan_changes(raw_result, profile, recipes, foods, current_plan):
         verified = calculate_recipe_nutrition(recipe, foods)
         verified["why"] = change.get("reason", "")
         verified["tags"] = ["refined"]
+        verified["serving_multiplier"] = 1.0
 
-        replaced = False
         for i, old_meal in enumerate(day["meals"]):
             if old_meal["meal_type"] == meal_type:
                 day["meals"][i] = verified
-                replaced = True
                 break
-
-        if not replaced:
-            raise ValueError(f"Meal {meal_type} was not found on Day {day_number}.")
 
         day["totals"] = nutrition_totals(day["meals"])
 
@@ -692,6 +813,70 @@ meals = st.multiselect(
     "Meals to plan",
     ["Breakfast", "Lunch", "Dinner", "Snacks"],
     default=["Breakfast", "Lunch", "Dinner"],
+)
+
+st.subheader("📅 Planning Horizon & Nutrition Targets")
+
+plan_days_count = st.selectbox(
+    "Plan length",
+    [3, 5, 7],
+    index=0,
+    format_func=lambda x: f"{x} days",
+)
+
+target_mode = st.selectbox(
+    "Daily calorie target",
+    ["No target", "1,600 kcal", "2,000 kcal", "2,400 kcal", "Custom"],
+)
+
+if target_mode == "Custom":
+    calorie_target = st.number_input(
+        "Custom daily calories",
+        min_value=800,
+        max_value=5000,
+        value=2000,
+        step=50,
+)
+elif target_mode == "1,600 kcal":
+    calorie_target = 1600
+elif target_mode == "2,000 kcal":
+    calorie_target = 2000
+elif target_mode == "2,400 kcal":
+    calorie_target = 2400
+else:
+    calorie_target = None
+
+protein_mode = st.selectbox(
+    "Daily protein target",
+    ["No target", "60 g", "90 g", "120 g", "Custom"],
+)
+
+if protein_mode == "Custom":
+    protein_target = st.number_input(
+        "Custom daily protein (g)",
+        min_value=20,
+        max_value=300,
+        value=90,
+        step=5,
+)
+elif protein_mode == "60 g":
+    protein_target = 60
+elif protein_mode == "90 g":
+    protein_target = 90
+elif protein_mode == "120 g":
+    protein_target = 120
+else:
+    protein_target = None
+
+portion_flexibility = st.selectbox(
+    "Portion flexibility",
+    ["Standard (±25%)", "Tighter (±15%)"],
+    help="Adjusts the complete recipe serving size without changing ingredient ratios.",
+)
+portion_adjustment = 0.25 if portion_flexibility.startswith("Standard") else 0.15
+
+st.caption(
+    "Targets are user-selected planning preferences, not medical prescriptions."
 )
 
 st.subheader("📅 Planning Horizon & Targets")
@@ -828,6 +1013,12 @@ if st.button("Set Profile & Load Local Context", type="primary", use_container_w
                 "days": plan_days_count,
                 "calorie_target": calorie_target,
                 "protein_target": protein_target,
+                "portion_adjustment": portion_adjustment,
+            }
+            st.session_state.plan_settings = {
+                "days": plan_days_count,
+                "calorie_target": calorie_target,
+                "protein_target": protein_target,
             }
 
     except requests.RequestException as exc:
@@ -875,20 +1066,24 @@ if profile and context:
     st.divider()
     st.header("🤖 AI Meal Planner")
     st.write(
-        "NutriPilot now plans across multiple days, balances against your chosen "
-        "targets, and avoids unnecessary recipe repetition. Nutrition is calculated "
-        "deterministically from the food database."
+        "Build a multi-day plan from the validated recipe catalogue and optimize "
+        "serving sizes against your selected targets."
     )
 
     settings = st.session_state.plan_settings or {
         "days": plan_days_count,
         "calorie_target": calorie_target,
         "protein_target": protein_target,
+        "portion_adjustment": portion_adjustment,
     }
 
-    if st.button("Generate My Multi-Day Plan", type="primary", use_container_width=True):
+    if st.button(
+        "Generate My Multi-Day Plan",
+        type="primary",
+        use_container_width=True,
+    ):
         try:
-            with st.spinner("Building a varied multi-day plan..."):
+            with st.spinner("Building your multi-day plan..."):
                 generated = generate_multi_day_plan(
                     profile,
                     context,
@@ -899,6 +1094,15 @@ if profile and context:
                     settings["calorie_target"],
                     settings["protein_target"],
                 )
+
+                generated = optimize_plan_portions(
+                    generated,
+                    foods,
+                    settings["calorie_target"],
+                    settings["protein_target"],
+                    settings["portion_adjustment"],
+                )
+
                 st.session_state.meal_plan = generated
                 st.session_state.chat_messages = []
 
@@ -911,27 +1115,35 @@ if profile and context:
         st.divider()
         st.header("📊 Plan Overview")
 
-        daily_rows = []
-        for day in plan_days(plan):
-            row = {
+        daily_rows = [
+            {
                 "Day": f"Day {day['day']}",
                 "Calories (kcal)": day["totals"]["calories_kcal"],
                 "Protein (g)": day["totals"]["protein_g"],
                 "Carbs (g)": day["totals"]["carbs_g"],
                 "Fiber (g)": day["totals"]["fiber_g"],
             }
-            daily_rows.append(row)
+            for day in plan_days(plan)
+        ]
 
-        overview = pd.DataFrame(daily_rows)
-        st.dataframe(overview, use_container_width=True, hide_index=True)
+        st.dataframe(
+            pd.DataFrame(daily_rows),
+            use_container_width=True,
+            hide_index=True,
+        )
 
         target_bits = []
         if settings["calorie_target"]:
-            target_bits.append(f"{settings['calorie_target']} kcal/day target")
+            target_bits.append(f"{settings['calorie_target']} kcal/day")
         if settings["protein_target"]:
-            target_bits.append(f"{settings['protein_target']} g protein/day target")
+            target_bits.append(f"{settings['protein_target']} g protein/day")
         if target_bits:
-            st.caption(" · ".join(target_bits))
+            st.caption("Targets: " + " · ".join(target_bits))
+
+        st.info(
+            "Portion optimization changes the complete recipe serving size within "
+            "your selected range. Ingredient ratios remain unchanged."
+        )
 
         for day in plan_days(plan):
             with st.expander(
@@ -941,11 +1153,15 @@ if profile and context:
                 expanded=True,
             ):
                 for meal in day["meals"]:
-                    st.subheader(f"{meal['meal_type']} — {meal['name']}")
-                    st.caption(
-                        f"{meal['total_time_min']:.0f} min total · "
-                        f"{meal['difficulty']} · {meal['cuisine']}"
+                    st.subheader(
+                        f"{meal['meal_type']} — {meal['name']}"
                     )
+                    st.caption(
+                        f"{meal['total_time_min']:.0f} min · "
+                        f"{meal['difficulty']} · {meal['cuisine']} · "
+                        f"{meal.get('serving_multiplier', 1.0):.2f}× serving"
+                    )
+
                     ingredient_text = " · ".join(
                         f"{item['food']} ({item['grams']:.0f} g)"
                         for item in meal["parsed_ingredients"]
@@ -953,27 +1169,27 @@ if profile and context:
                     st.write(f"**Ingredients:** {ingredient_text}")
 
                     nutrition = meal["nutrition"]
-                    metric_cols = st.columns(4)
-                    with metric_cols[0]:
+                    cols = st.columns(4)
+                    with cols[0]:
                         st.metric("Calories", f"{nutrition['calories_kcal']:.0f} kcal")
-                    with metric_cols[1]:
+                    with cols[1]:
                         st.metric("Protein", f"{nutrition['protein_g']:.1f} g")
-                    with metric_cols[2]:
+                    with cols[2]:
                         st.metric("Carbs", f"{nutrition['carbs_g']:.1f} g")
-                    with metric_cols[3]:
+                    with cols[3]:
                         st.metric("Fiber", f"{nutrition['fiber_g']:.1f} g")
 
                     st.write(f"**Why this meal?** {meal.get('why', '')}")
 
         st.divider()
         st.header("🛒 Shopping List")
+
         shopping = build_shopping_list(plan)
         st.dataframe(shopping, use_container_width=True, hide_index=True)
 
-        csv_data = shopping.to_csv(index=False).encode("utf-8")
         st.download_button(
             "Download Shopping List (CSV)",
-            data=csv_data,
+            data=shopping.to_csv(index=False).encode("utf-8"),
             file_name="nutripilot_shopping_list.csv",
             mime="text/csv",
             use_container_width=True,
@@ -982,8 +1198,8 @@ if profile and context:
         st.divider()
         st.header("💬 Refine Your Plan")
         st.write(
-            "Ask NutriPilot to change one part of the multi-day plan while keeping "
-            "the rest intact."
+            "Ask NutriPilot to change part of the multi-day plan while keeping "
+            "the remaining meals intact."
         )
 
         quick_actions = st.columns(3)
@@ -1014,24 +1230,33 @@ if profile and context:
             )
 
             try:
-                with st.spinner("Refining your multi-day plan..."):
+                with st.spinner("Refining your plan..."):
                     raw_result = refine_multi_day_plan(
                         profile,
                         context,
                         recipe_candidates,
                         st.session_state.meal_plan,
                         request_to_process,
-                        foods,
-                        recipes,
                     )
 
-                    st.session_state.meal_plan = apply_plan_changes(
+                    updated = apply_plan_changes(
                         raw_result,
                         profile,
                         recipes,
                         foods,
                         st.session_state.meal_plan,
                     )
+
+                    # Phase 7: re-optimize after conversational recipe replacement.
+                    updated = optimize_plan_portions(
+                        updated,
+                        foods,
+                        settings["calorie_target"],
+                        settings["protein_target"],
+                        settings["portion_adjustment"],
+                    )
+
+                    st.session_state.meal_plan = updated
 
                     assistant_message = raw_result.get(
                         "assistant_message",
@@ -1043,14 +1268,20 @@ if profile and context:
                         )
 
                     st.session_state.chat_messages.append(
-                        {"role": "assistant", "content": assistant_message}
+                        {
+                            "role": "assistant",
+                            "content": assistant_message,
+                        }
                     )
                     st.rerun()
 
             except Exception as exc:
                 error_message = f"I couldn't apply that change safely: {exc}"
                 st.session_state.chat_messages.append(
-                    {"role": "assistant", "content": error_message}
+                    {
+                        "role": "assistant",
+                        "content": error_message,
+                    }
                 )
                 st.error(error_message)
 
