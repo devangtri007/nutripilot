@@ -105,3 +105,47 @@ Refinement:
 The conversation layer can only satisfy requests that can be represented by the
 current recipe catalogue and metadata. It intentionally does not invent new recipes.
 This is a deliberate product/safety design choice for the prototype.
+
+
+## Phase 6 — Personalization + Meal-Plan Intelligence
+
+Phase 6 upgrades NutriPilot from single-meal recommendations to a multi-day
+planning system.
+
+### New capabilities
+
+- 3-, 5- or 7-day planning horizon.
+- User-selected daily calorie target (optional).
+- User-selected daily protein target (optional).
+- Deterministic daily nutrition totals.
+- Multi-day recipe variety / reduced repetition.
+- Day-by-day nutrition overview.
+- Aggregated shopping list across the complete plan.
+- CSV export of the shopping list.
+- Conversational refinement now works across days, for example:
+  - "Make Day 1 dinner higher protein"
+  - "No rice in the plan"
+  - "Keep every meal under 20 minutes"
+  - "Replace Day 2 lunch with something quicker"
+
+### Phase 6 architecture
+
+`Profile + location/weather → filtered recipe catalogue → AI multi-day selection → recipe ID validation → deterministic nutrition → daily target/variety visibility → shopping list`
+
+For refinement:
+
+`User request → AI identifies required day/meal changes → catalogue recipe IDs → validation → deterministic nutrition → updated multi-day plan`
+
+### Product design choice
+
+Nutrition targets are explicitly entered by the user. NutriPilot does not calculate
+or prescribe calorie/protein needs from age, sex, medical history or other sensitive
+attributes. This keeps the prototype positioned as a planning product rather than a
+medical or clinical nutrition system.
+
+### Current limitation
+
+The recipe catalogue is still the limiting factor for variety and precise target
+matching. Phase 6 deliberately does not invent recipes or modify ingredient
+quantities. More recipe coverage and portion-aware recipes would be the next data-layer
+improvement.
