@@ -2,51 +2,74 @@
 
 **AI-powered local nutrition copilot**
 
-NutriPilot is a personalized meal-planning application designed to recommend practical food choices based on:
+NutriPilot is a product-oriented meal-planning application designed to eventually recommend practical meals using:
 
 - User nutrition goals
 - Dietary preferences
 - Allergies and foods to avoid
-- Location
+- Country, region and city
 - Local and seasonal produce
 - Current weather conditions
+- Nutrition data
 
-The project started as a simple Streamlit fruit/nutrition demo and is being upgraded incrementally into a product-oriented AI application.
+## Phase 2 — Nutrition & Local Food Data
 
----
+Phase 2 introduces the first structured food layer.
 
-## Current Status
+### What was added
 
-### Phase 1 — User Profile ✅
+- `data/foods.csv` — starter food catalogue
+- Category filtering
+- Meal suitability filtering
+- Nutrition snapshot for individual foods
+- Nutrition fields for calories, protein, carbohydrates, fat and fiber
+- Season and region metadata
+- Diet metadata
+- `st.cache_data` for efficient local dataset loading
 
-The current version establishes the user's nutrition profile.
+The current starter catalogue contains **26 foods** spanning cereals, pulses, dairy, eggs, vegetables, fruits and nuts.
 
-It collects:
+### Important data decision
 
-- **Country**
-- **State / Region**
-- **City**
-- **Primary nutrition goal**
-- **Dietary preference**
-- **Allergies / foods to avoid**
-- **Meals to plan**
+This starter CSV is intended for **product development and prototyping**, not as a clinical nutrition database.
 
-The profile is stored temporarily in **Streamlit session state**.
+For a production-quality version, the next data step should use a properly sourced nutrition database. USDA FoodData Central provides REST access to food/nutrient data and downloadable datasets. See the official documentation:
 
-No external API or database is required for Phase 1.
+- https://fdc.nal.usda.gov/api-guide/
+- https://fdc.nal.usda.gov/download-datasets/
 
----
+For India-specific research, the Indian Food Composition Tables (IFCT 2017) are published by the National Institute of Nutrition / ICMR and contain detailed Indian food-composition information. Before embedding that material into a distributed product, review the source's usage terms and permissions.
 
-## Planned Product Flow
+## Product architecture
 
 ```text
 User Profile
      ↓
+Location + Diet + Goal
+     ↓
+Food Catalogue
+     ↓
+Nutrition / Region / Season Filters
+     ↓
+Candidate Foods
+```
+
+AI is intentionally **not** generating recommendations yet.
+
+The eventual architecture is:
+
+```text
+User Profile
+     +
 Location
+     +
+Season
+     +
+Weather
      ↓
-Season + Weather
+Context Engine
      ↓
-Local & Seasonal Produce
+Local + Seasonal Food Data
      ↓
 Nutrition Constraints
      ↓
@@ -54,27 +77,47 @@ AI Meal Planner
      ↓
 Breakfast / Lunch / Dinner / Snacks
      ↓
-Personalized Explanation
-     ↓
-Conversational Refinement
+Explanation + Iteration
 ```
 
-### Planned phases
+## Run locally
 
-#### Phase 1 — Personalized Profile
-Collect and store user preferences and location.
+```bash
+pip install -r requirements.txt
+streamlit run streamlit_app.py
+```
 
-#### Phase 2 — Nutrition & Local Food Data
-Build the food/nutrition data layer and identify local/seasonal ingredients.
+## Tech Stack
 
-#### Phase 3 — Season & Weather Context
-Automatically derive season from location/date and integrate live weather information.
+- Python
+- Streamlit
+- Pandas
+- CSV data layer
 
-#### Phase 4 — AI Meal Recommendation
-Use an LLM to generate personalized meal plans from structured food and nutrition data.
+Planned:
 
-#### Phase 5 — Conversational Refinement
-Allow users to modify recommendations naturally:
+- OpenAI API / LLMs
+- Weather API
+- Nutrition database
+- Snowflake
+- REST APIs
+
+## Roadmap
+
+### Phase 1 — Personalized Profile ✅
+Collect location, diet, goals, restrictions and meal preferences.
+
+### Phase 2 — Nutrition & Local Food Data ✅
+Create the structured food catalogue and filtering layer.
+
+### Phase 3 — Season & Weather Context
+Infer season from location/date and integrate live weather.
+
+### Phase 4 — AI Meal Recommendation
+Use an LLM to select and explain meal recommendations from structured candidates.
+
+### Phase 5 — Conversational Refinement
+Support iterative requests such as:
 
 > "Make dinner higher in protein."
 
@@ -82,107 +125,11 @@ Allow users to modify recommendations naturally:
 
 > "Give me a cheaper breakfast."
 
-#### Phase 6 — Evaluation & Product Analytics
-Evaluate recommendation quality, constraint handling, hallucinations, personalization and consistency.
+### Phase 6 — Evaluation & Product Analytics
+Test constraint satisfaction, recommendation quality, hallucination resistance and personalization.
 
----
+## Safety
 
-## Tech Stack
+NutriPilot is intended as a **meal discovery and planning prototype**, not medical diagnosis, treatment or individualized clinical dietary advice.
 
-### Current
-- Python
-- Streamlit
-- Streamlit Session State
-
-### Planned
-- OpenAI API / LLMs
-- Nutrition and food datasets
-- Weather API
-- Snowflake
-- Pandas
-- REST APIs
-
----
-
-## Running Locally
-
-### 1. Clone the repository
-
-```bash
-git clone <your-repository-url>
-cd <your-repository-folder>
-```
-
-### 2. Install dependencies
-
-```bash
-pip install -r requirements.txt
-```
-
-### 3. Run the application
-
-```bash
-streamlit run streamlit_app.py
-```
-
-The application will open in your browser.
-
----
-
-## Phase 1 Product Decisions
-
-### Why session state instead of Snowflake?
-
-The user profile is currently only needed during an active session. Persisting it in a database at this stage would add infrastructure before there is a clear product requirement for accounts, history or saved meal plans.
-
-Snowflake can be reintroduced when NutriPilot needs persistent data such as:
-
-- Saved meals
-- User history
-- Food catalogue
-- Recommendation logs
-- Evaluation data
-
-### Why not ask for season manually?
-
-Season can eventually be inferred from:
-
-```text
-Location + Current Date
-```
-
-This creates a cleaner experience and reduces unnecessary user input.
-
-### Why not use AI yet?
-
-Phase 1 deliberately focuses on getting the **user context and product flow** right before introducing an LLM.
-
-The AI layer will later operate on structured context rather than trying to infer everything from a free-form prompt.
-
----
-
-## Safety & Scope
-
-NutriPilot is intended as a **meal discovery and planning tool**, not a medical diagnosis or treatment system.
-
-Recommendations should be based on available nutrition data and user-provided preferences. Future versions should clearly distinguish estimated nutritional information from medical or professional dietary advice.
-
----
-
-## Project Evolution
-
-### Original application
-
-The original project was a Streamlit-based healthy diner application featuring:
-
-- Fruit selection
-- Fruit nutrition data
-- Fruityvice API integration
-- Snowflake data retrieval
-- Snowflake fruit insertion
-
-### NutriPilot
-
-The upgraded product evolves this into a personalized nutrition experience:
-
-> **From "What fruit do you want?" to "What should you eat today, given who you are and where you live?"**
+Nutrition values should be treated as estimates unless backed by a validated source and serving-specific calculation.
