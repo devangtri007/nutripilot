@@ -715,47 +715,97 @@ def build_shopping_list(plan):
 
 
 
-def normalize_plan_recipe_ids(plan, recipes, foods):
-    """Make plans from older app versions compatible with refinement.
+def _canonical_recipe_name(value):
+    """Normalize recipe names for robust matching across CSV/session versions."""
+    import unicodedata
+    value = unicodedata.normalize("NFKC", str(value or ""))
+    value = value.replace("&", " and ")
+    value = value.casefold()
+    return re.sub(r"[^a-z0-9]+", "", value)
 
-    Older session-state plans may contain recipe name/nutrition fields but no
-    recipe_id. Refinement requires a stable catalogue identifier, so recover it
-    deterministically from the recipe name and re-verify nutrition from the
-    catalogue.
-    """
+
+def _resolve_recipe_id(recipe_id, recipe_name, recipes):
+    """Resolve a recipe against the current catalogue without trusting the LLM."""
     lookup = recipes.set_index("recipe_id")
-    name_to_id = {}
-    for recipe_id, row in lookup.iterrows():
-        name_to_id[str(row["name"]).strip().casefold()] = recipe_id
 
+    # 1. Existing ID.
+    if recipe_id is not None and not pd.isna(recipe_id):
+        candidate = str(recipe_id).strip()
+        if candidate in lookup.index:
+            return candidate
+
+    # 2. Exact canonical name match.
+    target = _canonical_recipe_name(recipe_name)
+    if target:
+        matches = [
+            str(rid)
+            for rid, row in lookup.iterrows()
+            if _canonical_recipe_name(row.get("name")) == target
+        ]
+        if len(matches) == 1:
+            return matches[0]
+
+        # 3. Conservative fuzzy fallback for punctuation/wording drift.
+        from difflib import SequenceMatcher
+        scored = []
+        for rid, row in lookup.iterrows():
+            candidate_name = _canonical_recipe_name(row.get("name"))
+            if candidate_name:
+                scored.append((
+                    SequenceMatcher(None, target, candidate_name).ratio(),
+                    str(rid),
+                    str(row.get("name", "")),
+                ))
+        scored.sort(reverse=True)
+        if scored and scored[0][0] >= 0.90:
+            return scored[0][1]
+
+    return None
+
+
+def normalize_plan_recipe_ids(plan, recipes, foods):
+    """Convert any legacy/session-restored plan into a validated catalogue plan.
+
+    A plan may come from an older app version where recipe_id was not persisted.
+    Resolve IDs from the recipe name, then rebuild every meal from recipes.csv so
+    nutrition and ingredients always come from the current catalogue.
+    """
     normalized_days = []
+
     for day in plan_days(plan):
         normalized_meals = []
         for meal in day.get("meals", []):
             meal_copy = dict(meal)
-            recipe_id = meal_copy.get("recipe_id")
+            recipe_id = _resolve_recipe_id(
+                meal_copy.get("recipe_id"),
+                meal_copy.get("name", ""),
+                recipes,
+            )
 
-            if recipe_id not in lookup.index:
-                name = str(meal_copy.get("name", "")).strip().casefold()
-                recipe_id = name_to_id.get(name)
-
-            if recipe_id not in lookup.index:
+            if recipe_id is None:
+                available = recipes["name"].astype(str).tolist()
+                sample = ", ".join(available[:8])
                 raise ValueError(
                     f"Could not match '{meal_copy.get('name', 'unknown meal')}' "
-                    "to a catalogue recipe. Generate the plan again before refining it."
+                    "to the current recipe catalogue. The deployed data/recipes.csv "
+                    "may be stale or different from the file used to generate this plan. "
+                    f"Example current recipes: {sample}."
                 )
 
-            recipe = lookup.loc[recipe_id].to_dict()
+            recipe = recipes.loc[recipes["recipe_id"].astype(str) == str(recipe_id)].iloc[0].to_dict()
             verified = calculate_recipe_nutrition(recipe, foods)
             verified["why"] = meal_copy.get("why", "")
             verified["tags"] = meal_copy.get("tags", [])
-            verified["serving_multiplier"] = float(
-                meal_copy.get("serving_multiplier", 1.0)
-            )
+            try:
+                verified["serving_multiplier"] = float(
+                    meal_copy.get("serving_multiplier", 1.0)
+                )
+            except (TypeError, ValueError):
+                verified["serving_multiplier"] = 1.0
             normalized_meals.append(verified)
 
         normalized_days.append({
-            "day": day["day"],
+            "day": day.get("day"),
             "meals": normalized_meals,
             "totals": nutrition_totals(normalized_meals),
         })
