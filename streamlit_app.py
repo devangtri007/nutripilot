@@ -558,6 +558,85 @@ def validate_plan_response(raw_plan, profile, recipes, foods):
     return verified_days
 
 
+def generate_single_meal(
+    profile,
+    location_context,
+    recipe_candidates,
+    foods,
+    recipes,
+    meal_type,
+):
+    """Select exactly one validated catalogue recipe for on-demand mode."""
+    candidates = recipe_candidates[
+        recipe_candidates["meal_type"].eq(meal_type)
+    ].copy()
+
+    if candidates.empty:
+        raise ValueError(
+            f"No validated catalogue recipes are available for {meal_type} "
+            "under the selected diet, restrictions and local context."
+        )
+
+    candidate_records = [
+        recipe_record_for_prompt(row)
+        for row in candidates.to_dict(orient="records")
+    ]
+
+    system_prompt = """
+You are NutriPilot's on-demand meal recommendation engine.
+
+The recipe catalogue is the source of truth.
+
+Choose exactly ONE recipe_id from candidate_recipes.
+
+Rules:
+1. Never invent recipes, ingredients, quantities, nutrition values, or cooking steps.
+2. Select only a recipe_id present in candidate_recipes.
+3. The recipe must match the requested meal type.
+4. Respect the user's diet and foods to avoid.
+5. Prefer seasonal, location-relevant and weather-compatible recipes.
+6. Use the user's goal only as a ranking signal, not as medical advice.
+7. Return valid JSON only.
+
+Output:
+{
+  "recipe_id": "R001",
+  "why": "Short practical reason.",
+  "tags": ["seasonal", "goal-fit"]
+}
+"""
+    raw = call_json_model(
+        system_prompt,
+        {
+            "user_profile": profile,
+            "location_context": location_context,
+            "requested_meal": meal_type,
+            "candidate_recipes": candidate_records,
+        },
+    )
+
+    if not isinstance(raw, dict):
+        raise ValueError("AI did not return a valid single-meal response.")
+
+    recipe_id = raw.get("recipe_id")
+    lookup = recipes.set_index("recipe_id")
+
+    if recipe_id not in lookup.index:
+        raise ValueError(f"AI returned unsupported recipe_id: {recipe_id}")
+
+    recipe = lookup.loc[recipe_id].to_dict()
+    if recipe["meal_type"] != meal_type:
+        raise ValueError(
+            f"Recipe {recipe_id} is {recipe['meal_type']}, not {meal_type}."
+        )
+
+    verified = calculate_recipe_nutrition(recipe, foods)
+    verified["why"] = str(raw.get("why", ""))
+    verified["tags"] = raw.get("tags", [])
+    verified["serving_multiplier"] = 1.0
+    return verified
+
+
 def generate_multi_day_plan(
     profile,
     location_context,
@@ -719,10 +798,26 @@ def apply_plan_changes(raw_result, profile, recipes, foods, current_plan):
         for day in plan_days(current_plan)
     ]
 
-    for change in raw_result.get("changes", []):
-        day_number = int(change.get("day"))
+    changes = raw_result.get("changes", [])
+    if not isinstance(changes, list):
+        raise ValueError("AI returned an invalid changes list.")
+
+    for change in changes:
+        if not isinstance(change, dict):
+            raise ValueError("AI returned a malformed plan change.")
+        if change.get("day") is None:
+            raise ValueError("A refinement change is missing its day.")
+
+        day_number = int(change["day"])
         meal_type = change.get("meal")
         recipe_id = change.get("recipe_id")
+
+        if not meal_type:
+            raise ValueError("A refinement change is missing its meal type.")
+        if not recipe_id:
+            raise ValueError(
+                "The AI did not provide a recipe_id for the requested replacement."
+            )
 
         day = next((d for d in result if d["day"] == day_number), None)
         if day is None:
@@ -770,8 +865,11 @@ if "chat_messages" not in st.session_state:
     st.session_state.chat_messages = []
 if "plan_settings" not in st.session_state:
     st.session_state.plan_settings = None
+if "single_meal" not in st.session_state:
+    st.session_state.single_meal = None
 
 st.title("🥗 NutriPilot")
+st.caption("NutriPilot v8.2 FINAL")
 st.subheader("Your local, seasonal nutrition copilot.")
 st.write("Meal recommendations shaped by your goals, diet, location, season and current weather.")
 
@@ -779,12 +877,12 @@ st.divider()
 st.header("👤 Your Profile")
 
 countries = sorted(locations["country"].unique().tolist())
-country = st.selectbox("Country", countries)
+country = st.selectbox("Country", countries, key="country_select")
 
 region_options = sorted(
     locations.loc[locations["country"] == country, "region"].unique().tolist()
 )
-region = st.selectbox("State / Region", region_options)
+region = st.selectbox("State / Region", region_options, key="region_select")
 
 city_options = sorted(
     locations.loc[
@@ -792,164 +890,123 @@ city_options = sorted(
         "city",
     ].unique().tolist()
 )
-city = st.selectbox("City", city_options)
+city = st.selectbox("City", city_options, key="city_select")
 
 goal = st.selectbox(
     "Primary goal",
     ["General wellness", "Weight management", "Muscle gain", "High protein", "Better energy"],
+    key="goal_select",
 )
 
 diet = st.selectbox(
     "Diet",
     ["Vegetarian", "Vegan", "Eggetarian", "Non-vegetarian"],
+    key="diet_select",
 )
 
 restrictions = st.text_input(
     "Allergies or foods to avoid",
     placeholder="e.g., peanuts, mushrooms, lactose",
+    key="restrictions_input",
 )
 
 meals = st.multiselect(
     "Meals to plan",
     ["Breakfast", "Lunch", "Dinner", "Snacks"],
     default=["Breakfast", "Lunch", "Dinner"],
+    key="meals_select",
 )
 
-st.subheader("📅 Planning Horizon & Nutrition Targets")
+st.subheader("🍽️ How do you want to use NutriPilot?")
 
-plan_days_count = st.selectbox(
-    "Plan length",
-    [3, 5, 7],
-    index=0,
-    format_func=lambda x: f"{x} days",
+planning_mode = st.radio(
+    "Choose a planning mode",
+    ["Just one meal", "Multi-day schedule"],
+    horizontal=True,
+    key="planning_mode",
+    help="Choose one meal for an on-demand recommendation, or build a 3–7 day schedule.",
 )
 
-target_mode = st.selectbox(
-    "Daily calorie target",
-    ["No target", "1,600 kcal", "2,000 kcal", "2,400 kcal", "Custom"],
-)
+if planning_mode == "Multi-day schedule":
+    st.subheader("📅 Schedule Settings")
 
-if target_mode == "Custom":
-    calorie_target = st.number_input(
-        "Custom daily calories",
-        min_value=800,
-        max_value=5000,
-        value=2000,
-        step=50,
-)
-elif target_mode == "1,600 kcal":
-    calorie_target = 1600
-elif target_mode == "2,000 kcal":
-    calorie_target = 2000
-elif target_mode == "2,400 kcal":
-    calorie_target = 2400
-else:
-    calorie_target = None
-
-protein_mode = st.selectbox(
-    "Daily protein target",
-    ["No target", "60 g", "90 g", "120 g", "Custom"],
-)
-
-if protein_mode == "Custom":
-    protein_target = st.number_input(
-        "Custom daily protein (g)",
-        min_value=20,
-        max_value=300,
-        value=90,
-        step=5,
-)
-elif protein_mode == "60 g":
-    protein_target = 60
-elif protein_mode == "90 g":
-    protein_target = 90
-elif protein_mode == "120 g":
-    protein_target = 120
-else:
-    protein_target = None
-
-portion_flexibility = st.selectbox(
-    "Portion flexibility",
-    ["Standard (±25%)", "Tighter (±15%)"],
-    help="Adjusts the complete recipe serving size without changing ingredient ratios.",
-)
-portion_adjustment = 0.25 if portion_flexibility.startswith("Standard") else 0.15
-
-st.caption(
-    "Targets are user-selected planning preferences, not medical prescriptions."
-)
-
-st.subheader("📅 Planning Horizon & Targets")
-
-plan_days_count = st.selectbox(
-    "Plan length",
-    [3, 5, 7],
-    index=0,
-    format_func=lambda x: f"{x} days",
-)
-
-target_mode = st.selectbox(
-    "Daily nutrition target",
-    [
-        "No target — prioritize variety",
-        "1,600 kcal",
-        "2,000 kcal",
-        "2,400 kcal",
-        "Custom",
-    ],
-)
-
-if target_mode == "Custom":
-    calorie_target = st.number_input(
-        "Daily calories (your chosen target)",
-        min_value=800,
-        max_value=5000,
-        value=2000,
-        step=50,
+    plan_days_count = st.selectbox(
+        "Plan length",
+        [3, 5, 7],
+        index=0,
+        format_func=lambda x: f"{x} days",
+        key="plan_days_count",
     )
-elif target_mode.startswith("1,600"):
-    calorie_target = 1600
-elif target_mode.startswith("2,000"):
-    calorie_target = 2000
-elif target_mode.startswith("2,400"):
-    calorie_target = 2400
-else:
-    calorie_target = None
 
-protein_mode = st.selectbox(
-    "Daily protein target",
-    [
-        "No target",
-        "60 g",
-        "90 g",
-        "120 g",
-        "Custom",
-    ],
-)
-
-if protein_mode == "Custom":
-    protein_target = st.number_input(
-        "Daily protein (your chosen target, g)",
-        min_value=20,
-        max_value=300,
-        value=90,
-        step=5,
+    target_mode = st.selectbox(
+        "Daily calorie target",
+        ["No target", "1,600 kcal", "2,000 kcal", "2,400 kcal", "Custom"],
+        key="daily_calorie_mode",
     )
-elif protein_mode == "60 g":
-    protein_target = 60
-elif protein_mode == "90 g":
-    protein_target = 90
-elif protein_mode == "120 g":
-    protein_target = 120
+
+    if target_mode == "Custom":
+        calorie_target = st.number_input(
+            "Custom daily calories",
+            min_value=800, max_value=5000, value=2000, step=50,
+            key="custom_daily_calories",
+        )
+    elif target_mode == "1,600 kcal":
+        calorie_target = 1600
+    elif target_mode == "2,000 kcal":
+        calorie_target = 2000
+    elif target_mode == "2,400 kcal":
+        calorie_target = 2400
+    else:
+        calorie_target = None
+
+    protein_mode = st.selectbox(
+        "Daily protein target",
+        ["No target", "60 g", "90 g", "120 g", "Custom"],
+        key="daily_protein_mode",
+    )
+
+    if protein_mode == "Custom":
+        protein_target = st.number_input(
+            "Custom daily protein (g)",
+            min_value=20, max_value=300, value=90, step=5,
+            key="custom_daily_protein",
+        )
+    elif protein_mode == "60 g":
+        protein_target = 60
+    elif protein_mode == "90 g":
+        protein_target = 90
+    elif protein_mode == "120 g":
+        protein_target = 120
+    else:
+        protein_target = None
+
+    portion_flexibility = st.selectbox(
+        "Portion flexibility",
+        ["Standard (±25%)", "Tighter (±15%)"],
+        help="Adjusts the complete recipe serving size without changing ingredient ratios.",
+        key="portion_flexibility",
+    )
+    portion_adjustment = (
+        0.25 if portion_flexibility.startswith("Standard") else 0.15
+    )
+
+    st.caption(
+        "Targets are planning preferences you choose; NutriPilot does not prescribe "
+        "medical or therapeutic nutrition targets."
+    )
 else:
+    # On-demand mode intentionally has no planning horizon or daily targets.
+    plan_days_count = 1
+    calorie_target = None
     protein_target = None
+    portion_adjustment = 0.25
 
-st.caption(
-    "Targets are planning preferences you choose; NutriPilot does not prescribe "
-    "medical or therapeutic nutrition targets."
-)
-
-if st.button("Set Profile & Load Local Context", type="primary", use_container_width=True):
+if st.button(
+    "Load Local Context",
+    type="primary",
+    use_container_width=True,
+    key="load_local_context",
+):
     if not meals:
         st.error("Select at least one meal.")
         st.stop()
@@ -1008,17 +1065,14 @@ if st.button("Set Profile & Load Local Context", type="primary", use_container_w
 
             st.session_state.location_context = context
             st.session_state.meal_plan = None
+            st.session_state.single_meal = None
             st.session_state.chat_messages = []
             st.session_state.plan_settings = {
+                "mode": planning_mode,
                 "days": plan_days_count,
                 "calorie_target": calorie_target,
                 "protein_target": protein_target,
                 "portion_adjustment": portion_adjustment,
-            }
-            st.session_state.plan_settings = {
-                "days": plan_days_count,
-                "calorie_target": calorie_target,
-                "protein_target": protein_target,
             }
 
     except requests.RequestException as exc:
@@ -1063,227 +1117,244 @@ if profile and context:
             hide_index=True,
         )
 
+
     st.divider()
-    st.header("🤖 AI Meal Planner")
-    st.write(
-        "Build a multi-day plan from the validated recipe catalogue and optimize "
-        "serving sizes against your selected targets."
-    )
 
     settings = st.session_state.plan_settings or {
+        "mode": planning_mode,
         "days": plan_days_count,
         "calorie_target": calorie_target,
         "protein_target": protein_target,
         "portion_adjustment": portion_adjustment,
     }
 
-    if st.button(
-        "Generate My Multi-Day Plan",
-        type="primary",
-        use_container_width=True,
-    ):
-        try:
-            with st.spinner("Building your multi-day plan..."):
-                generated = generate_multi_day_plan(
-                    profile,
-                    context,
-                    recipe_candidates,
-                    foods,
-                    recipes,
-                    settings["days"],
-                    settings["calorie_target"],
-                    settings["protein_target"],
-                )
-
-                generated = optimize_plan_portions(
-                    generated,
-                    foods,
-                    settings["calorie_target"],
-                    settings["protein_target"],
-                    settings["portion_adjustment"],
-                )
-
-                st.session_state.meal_plan = generated
-                st.session_state.chat_messages = []
-
-        except Exception as exc:
-            st.error(f"Could not generate the meal plan: {exc}")
-
-    if st.session_state.meal_plan:
-        plan = st.session_state.meal_plan
-
-        st.divider()
-        st.header("📊 Plan Overview")
-
-        daily_rows = [
-            {
-                "Day": f"Day {day['day']}",
-                "Calories (kcal)": day["totals"]["calories_kcal"],
-                "Protein (g)": day["totals"]["protein_g"],
-                "Carbs (g)": day["totals"]["carbs_g"],
-                "Fiber (g)": day["totals"]["fiber_g"],
-            }
-            for day in plan_days(plan)
-        ]
-
-        st.dataframe(
-            pd.DataFrame(daily_rows),
-            use_container_width=True,
-            hide_index=True,
-        )
-
-        target_bits = []
-        if settings["calorie_target"]:
-            target_bits.append(f"{settings['calorie_target']} kcal/day")
-        if settings["protein_target"]:
-            target_bits.append(f"{settings['protein_target']} g protein/day")
-        if target_bits:
-            st.caption("Targets: " + " · ".join(target_bits))
-
-        st.info(
-            "Portion optimization changes the complete recipe serving size within "
-            "your selected range. Ingredient ratios remain unchanged."
-        )
-
-        for day in plan_days(plan):
-            with st.expander(
-                f"Day {day['day']} · "
-                f"{day['totals']['calories_kcal']:.0f} kcal · "
-                f"{day['totals']['protein_g']:.1f} g protein",
-                expanded=True,
-            ):
-                for meal in day["meals"]:
-                    st.subheader(
-                        f"{meal['meal_type']} — {meal['name']}"
-                    )
-                    st.caption(
-                        f"{meal['total_time_min']:.0f} min · "
-                        f"{meal['difficulty']} · {meal['cuisine']} · "
-                        f"{meal.get('serving_multiplier', 1.0):.2f}× serving"
-                    )
-
-                    ingredient_text = " · ".join(
-                        f"{item['food']} ({item['grams']:.0f} g)"
-                        for item in meal["parsed_ingredients"]
-                    )
-                    st.write(f"**Ingredients:** {ingredient_text}")
-
-                    nutrition = meal["nutrition"]
-                    cols = st.columns(4)
-                    with cols[0]:
-                        st.metric("Calories", f"{nutrition['calories_kcal']:.0f} kcal")
-                    with cols[1]:
-                        st.metric("Protein", f"{nutrition['protein_g']:.1f} g")
-                    with cols[2]:
-                        st.metric("Carbs", f"{nutrition['carbs_g']:.1f} g")
-                    with cols[3]:
-                        st.metric("Fiber", f"{nutrition['fiber_g']:.1f} g")
-
-                    st.write(f"**Why this meal?** {meal.get('why', '')}")
-
-        st.divider()
-        st.header("🛒 Shopping List")
-
-        shopping = build_shopping_list(plan)
-        st.dataframe(shopping, use_container_width=True, hide_index=True)
-
-        st.download_button(
-            "Download Shopping List (CSV)",
-            data=shopping.to_csv(index=False).encode("utf-8"),
-            file_name="nutripilot_shopping_list.csv",
-            mime="text/csv",
-            use_container_width=True,
-        )
-
-        st.divider()
-        st.header("💬 Refine Your Plan")
+    if settings.get("mode") == "Just one meal":
+        st.header("🍽️ On-Demand Meal")
         st.write(
-            "Ask NutriPilot to change part of the multi-day plan while keeping "
-            "the remaining meals intact."
+            "Get one practical recommendation without creating a multi-day schedule."
         )
 
-        quick_actions = st.columns(3)
-        quick_requests = [
-            "Make Day 1 dinner higher protein",
-            "No rice in the plan",
-            "Keep every meal under 20 minutes",
-        ]
-
-        selected_quick = None
-        for idx, label in enumerate(quick_requests):
-            with quick_actions[idx]:
-                if st.button(label, use_container_width=True):
-                    selected_quick = label
-
-        for message in st.session_state.chat_messages:
-            with st.chat_message(message["role"]):
-                st.write(message["content"])
-
-        user_request = st.chat_input(
-            "e.g. Replace Day 2 lunch with something quicker"
+        meal_choice = st.selectbox(
+            "Which meal do you want help with?",
+            profile["meals"],
+            key="single_meal_choice",
         )
-        request_to_process = selected_quick or user_request
 
-        if request_to_process:
-            st.session_state.chat_messages.append(
-                {"role": "user", "content": request_to_process}
-            )
-
+        if st.button(
+            "Recommend My Meal",
+            type="primary",
+            use_container_width=True,
+            key="recommend_single_meal",
+        ):
             try:
-                with st.spinner("Refining your plan..."):
-                    raw_result = refine_multi_day_plan(
+                with st.spinner("Finding the best catalogue recipe for you..."):
+                    st.session_state.single_meal = generate_single_meal(
                         profile,
                         context,
                         recipe_candidates,
-                        st.session_state.meal_plan,
-                        request_to_process,
-                    )
-
-                    updated = apply_plan_changes(
-                        raw_result,
-                        profile,
-                        recipes,
                         foods,
-                        st.session_state.meal_plan,
+                        recipes,
+                        meal_choice,
                     )
+            except (ValueError, KeyError) as exc:
+                st.error(f"Could not safely generate the meal: {exc}")
+            except Exception as exc:
+                st.error(f"Meal recommendation failed: {exc}")
 
-                    # Phase 7: re-optimize after conversational recipe replacement.
-                    updated = optimize_plan_portions(
-                        updated,
+        meal = st.session_state.single_meal
+        if meal:
+            st.success(f"**{meal['meal_type']} · {meal['name']}**")
+            if meal.get("why"):
+                st.write(meal["why"])
+
+            nutrition = meal["nutrition"]
+            cols = st.columns(4)
+            with cols[0]:
+                st.metric("Calories", f"{nutrition['calories_kcal']:.0f} kcal")
+            with cols[1]:
+                st.metric("Protein", f"{nutrition['protein_g']:.1f} g")
+            with cols[2]:
+                st.metric("Carbs", f"{nutrition['carbs_g']:.1f} g")
+            with cols[3]:
+                st.metric("Time", f"{meal['total_time_min']} min")
+
+            st.write("**Ingredients**")
+            st.dataframe(
+                pd.DataFrame(meal["parsed_ingredients"]),
+                use_container_width=True,
+                hide_index=True,
+            )
+
+    else:
+        st.header("🤖 AI Meal Planner")
+        st.write(
+            "Build a multi-day plan from the validated recipe catalogue and optimize "
+            "serving sizes against your selected targets."
+        )
+
+        if st.button(
+            "Generate My Multi-Day Plan",
+            type="primary",
+            use_container_width=True,
+            key="generate_multi_day_plan",
+        ):
+            try:
+                with st.spinner("Building your multi-day plan..."):
+                    generated = generate_multi_day_plan(
+                        profile,
+                        context,
+                        recipe_candidates,
+                        foods,
+                        recipes,
+                        settings["days"],
+                        settings["calorie_target"],
+                        settings["protein_target"],
+                    )
+                    generated = optimize_plan_portions(
+                        generated,
                         foods,
                         settings["calorie_target"],
                         settings["protein_target"],
                         settings["portion_adjustment"],
                     )
+                st.session_state.meal_plan = generated
+                st.session_state.chat_messages = []
+            except (ValueError, KeyError) as exc:
+                st.error(f"Could not safely generate the plan: {exc}")
+            except Exception as exc:
+                st.error(f"Plan generation failed: {exc}")
 
-                    st.session_state.meal_plan = updated
+        plan = st.session_state.meal_plan
 
-                    assistant_message = raw_result.get(
-                        "assistant_message",
-                        "I updated the plan where possible.",
+        if plan:
+            st.subheader("Your Plan")
+
+            for day in plan_days(plan):
+                st.markdown(f"### Day {day['day']}")
+                for meal in day["meals"]:
+                    nutrition = meal["nutrition"]
+                    st.markdown(
+                        f"**{meal['meal_type']}: {meal['name']}** · "
+                        f"{nutrition['calories_kcal']:.0f} kcal · "
+                        f"{nutrition['protein_g']:.1f} g protein · "
+                        f"{meal.get('total_time_min', 0)} min · "
+                        f"{meal.get('serving_multiplier', 1.0):.2f}× serving"
                     )
-                    if not raw_result.get("changes"):
-                        assistant_message += (
-                            " I couldn't make that change using the current recipe catalogue."
+                    ingredient_text = ", ".join(
+                        f"{item['food']} ({item['grams']:.0f} g)"
+                        for item in meal["parsed_ingredients"]
+                    )
+                    st.caption(f"Ingredients: {ingredient_text}")
+                    if meal.get("why"):
+                        st.caption(meal["why"])
+
+                st.info(
+                    f"Day {day['day']} total: "
+                    f"{day['totals']['calories_kcal']:.0f} kcal · "
+                    f"{day['totals']['protein_g']:.1f} g protein"
+                )
+
+            st.divider()
+            st.header("🛒 Shopping List")
+            shopping = build_shopping_list(plan)
+            st.dataframe(shopping, use_container_width=True, hide_index=True)
+            st.download_button(
+                "Download Shopping List (CSV)",
+                data=shopping.to_csv(index=False).encode("utf-8"),
+                file_name="nutripilot_shopping_list.csv",
+                mime="text/csv",
+                use_container_width=True,
+                key="download_shopping_list",
+            )
+
+            st.divider()
+            st.header("💬 Refine Your Plan")
+            st.write(
+                "Ask NutriPilot to change part of the multi-day plan while keeping "
+                "the remaining meals intact."
+            )
+
+            quick_actions = st.columns(3)
+            quick_requests = [
+                "Make Day 1 dinner higher protein",
+                "No rice in the plan",
+                "Keep every meal under 20 minutes",
+            ]
+
+            selected_quick = None
+            for idx, label in enumerate(quick_requests):
+                with quick_actions[idx]:
+                    if st.button(
+                        label,
+                        use_container_width=True,
+                        key=f"quick_refinement_{idx}",
+                    ):
+                        selected_quick = label
+
+            for message in st.session_state.chat_messages:
+                with st.chat_message(message["role"]):
+                    st.write(message["content"])
+
+            user_request = st.chat_input(
+                "e.g. Replace Day 2 lunch with something quicker",
+                key="plan_refinement_input",
+            )
+            request_to_process = selected_quick or user_request
+
+            if request_to_process:
+                st.session_state.chat_messages.append(
+                    {"role": "user", "content": request_to_process}
+                )
+
+                try:
+                    with st.spinner("Refining your plan..."):
+                        raw_result = refine_multi_day_plan(
+                            profile,
+                            context,
+                            recipe_candidates,
+                            st.session_state.meal_plan,
+                            request_to_process,
                         )
 
-                    st.session_state.chat_messages.append(
-                        {
-                            "role": "assistant",
-                            "content": assistant_message,
-                        }
-                    )
-                    st.rerun()
+                        updated = apply_plan_changes(
+                            raw_result,
+                            profile,
+                            recipes,
+                            foods,
+                            st.session_state.meal_plan,
+                        )
 
-            except Exception as exc:
-                error_message = f"I couldn't apply that change safely: {exc}"
-                st.session_state.chat_messages.append(
-                    {
-                        "role": "assistant",
-                        "content": error_message,
-                    }
-                )
-                st.error(error_message)
+                        updated = optimize_plan_portions(
+                            updated,
+                            foods,
+                            settings["calorie_target"],
+                            settings["protein_target"],
+                            settings["portion_adjustment"],
+                        )
+
+                        st.session_state.meal_plan = updated
+                        assistant_message = raw_result.get(
+                            "assistant_message",
+                            "I updated the plan where possible.",
+                        )
+                        if not raw_result.get("changes"):
+                            assistant_message += (
+                                " I couldn't make that change using the current recipe catalogue."
+                            )
+
+                        st.session_state.chat_messages.append(
+                            {"role": "assistant", "content": assistant_message}
+                        )
+                        st.rerun()
+
+                except (ValueError, KeyError) as exc:
+                    error_message = f"I couldn't apply that change safely: {exc}"
+                    st.session_state.chat_messages.append(
+                        {"role": "assistant", "content": error_message}
+                    )
+                    st.error(error_message)
+                except Exception as exc:
+                    st.error(f"Refinement failed: {exc}")
 
 
 if catalogue_errors:
