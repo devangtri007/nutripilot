@@ -2,115 +2,116 @@
 
 **AI-powered local nutrition copilot**
 
-NutriPilot is a product-oriented meal-planning application designed to eventually recommend practical meals using:
+NutriPilot recommends practical meal ideas using user preferences, local context, seasonality and structured nutrition data.
 
-- User nutrition goals
-- Dietary preferences
-- Allergies and foods to avoid
-- Country, region and city
-- Local and seasonal produce
-- Current weather conditions
-- Nutrition data
+## Phase 4 — AI Meal Recommendation
 
-## Phase 3 — Season & Weather Context
+Phase 4 turns the previous data/context layers into an AI-assisted meal planner.
 
-Phase 3 connects the user's location to external geographic and weather data.
-
-### What was added
-
-- City/region/country geocoding
-- Latitude/longitude resolution
-- Automatic season inference
-- Live current weather
-- Temperature
-- Feels-like temperature
-- Relative humidity
-- Precipitation
-- Wind speed
-- Simple weather context such as Hot, Cold, Mild, Rainy or Thunderstorm
-- Cached API responses to reduce repeated requests
-- Graceful error handling when external services are unavailable
-
-### APIs
-
-NutriPilot uses Open-Meteo for this prototype:
-
-1. **Geocoding API**
-   - Converts a user-entered location into coordinates.
-   - Returns location hierarchy and timezone.
-
-2. **Weather Forecast API**
-   - Uses those coordinates to retrieve current conditions.
-
-Open-Meteo documents both APIs at:
-- https://open-meteo.com/en/docs/geocoding-api
-- https://open-meteo.com/en/docs
-
-The Open-Meteo public service currently states that no authentication is required for non-commercial use and provides a CC BY 4.0 data licence. Review its current terms before deploying a commercial product.
-
-## Season logic
-
-Season is intentionally derived rather than entered manually.
-
-For the prototype:
-
-- India uses a simplified food-oriented model:
-  - March–May → Summer
-  - June–September → Monsoon
-  - October–November → Post-monsoon
-  - December–February → Winter
-
-- Other locations use a hemisphere-based four-season model.
-
-This is a product heuristic, not a scientific climate classification. Later versions can replace it with region-specific seasonality and agricultural/local-produce data.
-
-## Current product flow
+### User flow
 
 ```text
-Country + Region + City
-          ↓
-     Geocoding API
-          ↓
-    Coordinates + TZ
-          ↓
-      Weather API
-          ↓
- Temperature / Rain / Humidity / Wind
-          ↓
-       Season Logic
-          ↓
-    Local Context Object
-```
-
-That context is now available in Streamlit session state and is ready for the Phase 4 recommendation engine.
-
-## Planned AI architecture
-
-```text
-User Profile
-     +
-Location
-     +
-Season
-     +
-Weather
-     ↓
-Context Engine
-     ↓
-Local + Seasonal Food Data
-     ↓
-Nutrition Constraints
-     ↓
-Candidate Meals
-     ↓
-AI Meal Planner
-     ↓
+Country
+   ↓
+State / Region
+   ↓
+City
+   ↓
+Diet + Goal + Restrictions + Meals
+   ↓
+Open-Meteo location validation
+   ↓
+Live Weather + Season
+   ↓
+Food Candidate Filtering
+   ↓
+LLM Meal Planner
+   ↓
+Deterministic Nutrition Calculation
+   ↓
 Breakfast / Lunch / Dinner / Snacks
-     ↓
-Explanation + Iteration
 ```
 
-The LLM should **not** be responsible for inventing weather, season or nutrition facts. Those should come from deterministic/data-backed components.
+### What Phase 4 adds
+
+- Cascading Country → Region → City selectors
+- Open-Meteo validation of the selected location
+- Live weather context
+- Season context
+- Candidate-food filtering based on diet, restrictions and season
+- OpenAI-powered meal planning
+- Structured JSON output from the model
+- Deterministic nutrition calculations from the food catalogue
+- Meal-specific explanations
+- Multiple meal types
+- No LLM-generated nutrition totals
+
+## Location selector design
+
+The dropdowns use a local `data/locations.csv` catalogue for the initial product scope.
+
+The selected city is then **validated against Open-Meteo's geocoding API** before weather is requested.
+
+This is intentional: Open-Meteo's geocoding endpoint is a search API rather than a complete country → admin1 → city directory. It accepts a location name and can be narrowed with country/admin1 qualifiers, and returns fields including `country`, `country_code`, `admin1`, latitude, longitude and timezone.
+
+Official documentation:
+https://open-meteo.com/en/docs/geocoding-api
+
+The initial catalogue can be expanded later as the product adds supported markets.
+
+## AI design
+
+The LLM is not treated as the source of truth for nutrition.
+
+The workflow is:
+
+```text
+Structured context
+       ↓
+Candidate food catalogue
+       ↓
+LLM chooses meals + quantities
+       ↓
+Validate every food against catalogue
+       ↓
+Calculate nutrition from database
+       ↓
+Display result
+```
+
+If the model returns a food that does not exist in the catalogue, the application rejects that meal instead of silently accepting invented nutrition information.
+
+### Model
+
+The prototype uses `gpt-4o-mini`.
+
+The model receives:
+
+- User location
+- Season
+- Current weather
+- Diet
+- Nutrition goal
+- Foods to avoid
+- Requested meals
+- Candidate food catalogue
+
+The model is instructed to return structured JSON.
+
+## API configuration
+
+Create `.streamlit/secrets.toml`:
+
+```toml
+OPENAI_API_KEY = "your-api-key"
+```
+
+Do **not** commit this file to Git.
+
+For Streamlit Community Cloud, add `OPENAI_API_KEY` through the app's Secrets settings instead.
+
+OpenAI API documentation:
+https://platform.openai.com/docs/api-reference
 
 ## Run locally
 
@@ -119,52 +120,96 @@ pip install -r requirements.txt
 streamlit run streamlit_app.py
 ```
 
+## Data layer
+
+Current starter food catalogue:
+
+- `data/foods.csv`
+
+Current location catalogue:
+
+- `data/locations.csv`
+
+The food catalogue is still a prototype dataset. It should eventually be replaced/expanded using properly sourced nutrition data.
+
 ## Tech Stack
 
-### Current
 - Python
 - Streamlit
 - Pandas
 - Requests
+- OpenAI API / LLM
 - Open-Meteo Geocoding API
 - Open-Meteo Weather API
-- CSV food data
+- CSV data layer
 
-### Planned
-- OpenAI API / LLMs
-- Validated nutrition database
-- Local/seasonal produce data
-- Snowflake
-- Recommendation evaluation framework
+## Product architecture
+
+```text
+                  NUTRIPILOT
+                      │
+          ┌───────────┴───────────┐
+          │                       │
+     User Profile            Location
+          │                       │
+          │                 Open-Meteo
+          │                       │
+          └───────────┬───────────┘
+                      ↓
+                Context Engine
+                      ↓
+             Food Candidate Layer
+                      ↓
+                  AI Planner
+                      ↓
+              Structured Output
+                      ↓
+             Deterministic Checks
+                      ↓
+              Nutrition Calculation
+                      ↓
+            Personalized Meal Plan
+```
 
 ## Roadmap
 
 ### Phase 1 — Personalized Profile ✅
-Collect location, diet, goals, restrictions and meal preferences.
+Collect user location, diet, goals, restrictions and meals.
 
 ### Phase 2 — Nutrition & Local Food Data ✅
-Create the structured food catalogue and filtering layer.
+Create structured food and nutrition data.
 
 ### Phase 3 — Season & Weather Context ✅
-Resolve location, infer season and retrieve live weather.
+Resolve location and obtain current weather.
 
-### Phase 4 — AI Meal Recommendation
-Generate personalized breakfast, lunch, dinner and snack recommendations using the structured context and food data.
+### Phase 4 — AI Meal Recommendation ✅
+Generate personalized breakfast, lunch, dinner and snack recommendations.
 
 ### Phase 5 — Conversational Refinement
-Support iterative requests such as:
+Allow users to iteratively modify plans:
 
 > "Make dinner higher in protein."
 
 > "I don't have paneer."
 
-> "Give me a cheaper breakfast."
+> "Make breakfast cheaper."
+
+> "Replace this with something local."
 
 ### Phase 6 — Evaluation & Product Analytics
-Test constraint satisfaction, recommendation quality, hallucination resistance, local relevance and personalization.
+Build a test suite for:
+
+- Constraint satisfaction
+- Diet compliance
+- Food-catalogue grounding
+- Nutritional calculation correctness
+- Local/seasonal relevance
+- Weather-context relevance
+- Hallucination resistance
+- Recommendation consistency
 
 ## Safety
 
-NutriPilot is intended as a **meal discovery and planning prototype**, not medical diagnosis, treatment or individualized clinical dietary advice.
+NutriPilot is a meal-planning prototype and should not be treated as medical diagnosis, treatment or individualized clinical dietary advice.
 
-Nutrition values should be treated as estimates unless backed by a validated source and serving-specific calculation.
+Allergy information should be treated conservatively. The prototype's text matching is not a substitute for professional allergen verification or packaged-food label checks.
