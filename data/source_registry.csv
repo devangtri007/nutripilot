@@ -1,4 +1,0 @@
-source_system,source_type,role,license,access,official_url,download_url,status
-USDA FoodData Central,API + downloadable datasets,Primary scalable food-composition source,CC0 1.0 Universal,API key required for API requests,https://fdc.nal.usda.gov/api-guide/,https://fdc.nal.usda.gov/download-datasets/,Ready for ingestion
-ICMR-NIN IFCT 2017,Indian food composition reference,Indian-food reference / approved import source,Verify applicable publication/data-use terms before redistribution,Official NIN publication,https://www.nin.res.in/ebooks/IFCT2017.pdf,https://www.nin.res.in/downloads/,Reference; structured import requires approved source/export
-NutriPilot prototype seed,Prototype CSV,Development fallback only,Prototype/internal,Bundled with app,,,Replace with governed production data
