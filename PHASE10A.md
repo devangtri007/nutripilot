@@ -1,37 +1,42 @@
-# NutriPilot Phase 10A — USDA Foundation + FNDDS
+# Phase 10A
 
-Phase 10A replaces the small prototype food universe with a governed USDA ingestion pipeline. It covers two official FoodData Central data types:
+**V6 ingestion/validation patch:** canonicalizes negative carbohydrate-by-difference values to zero with provenance. — USDA Foundation + FNDDS
 
-- **Foundation Foods — April 2026**: minimally processed foods and ingredients.
-- **FNDDS 2021–2023 — October 2024**: prepared foods and survey foods.
+## Validation policy
 
-USDA currently lists the Foundation CSV at about 3.7 MB compressed / 32 MB uncompressed and FNDDS at about 200 MB compressed / 1.6 GB uncompressed. Do not commit the raw archives to Git.
+Foundation Foods does not provide every nutrient for every food. USDA
+documentation explicitly notes that some nutrients have not yet been analyzed
+for particular foods. Therefore Phase 10A validation distinguishes:
 
-## 1. Install dependencies
+- **Hard requirements:** schema, source identity, unique source IDs, non-empty
+  records, and no negative nutrient values.
+- **Core macros:** protein, carbohydrate, and fat coverage are reported and
+  must be at least 80% for the imported table to pass.
+- **Optional nutrients:** calories and fiber coverage are reported
+  informationally and are not rejected solely because some values are absent.
 
-```bash
-pip install -r requirements.txt
+### Energy handling
+
+Current Foundation Foods use:
+
+- nutrient 2047 — Metabolizable Energy (Atwater General Factor)
+- nutrient 2048 — Metabolizable Energy (Atwater Specific Factor)
+
+NutriPilot uses 2048 first, then 2047, then legacy 1008 where applicable.
+If no USDA energy value is present but protein, fat, and carbohydrate are all
+available, the ingestion script derives kcal as:
+
+```text
+kcal = 4 × protein_g + 9 × fat_g + 4 × carbohydrate_g
 ```
 
-## 2. Download the official archives
+That derived value is explicitly marked in `data_basis`; it is not presented as
+a directly published USDA energy value. USDA documents the 4/9/4 Atwater general
+factors for Foundation Foods.
 
-From the repository root:
+## Re-run after replacing the scripts
 
-```bash
-python scripts/download_usda_datasets.py --dataset foundation --output-dir data/raw
-python scripts/download_usda_datasets.py --dataset fndds --output-dir data/raw
-```
-
-Or download both:
-
-```bash
-python scripts/download_usda_datasets.py --dataset foundation --output-dir data/raw
-python scripts/download_usda_datasets.py --dataset fndds --output-dir data/raw
-```
-
-The script uses the official USDA FoodData Central release URLs pinned in the source. Check the USDA download page before a future refresh.
-
-## 3. Normalize each source
+The USDA ZIP files already downloaded do not need to be downloaded again.
 
 ```bash
 python scripts/ingest_usda_bulk.py \
@@ -39,7 +44,9 @@ python scripts/ingest_usda_bulk.py \
   --source-system "USDA FoodData Central Foundation" \
   --source-version 2026-04 \
   --output data/usda_foundation_foods.csv
+```
 
+```bash
 python scripts/ingest_usda_bulk.py \
   --archive data/raw/FoodData_Central_survey_food_csv_2024-10-31.zip \
   --source-system "USDA FoodData Central FNDDS" \
@@ -47,53 +54,29 @@ python scripts/ingest_usda_bulk.py \
   --output data/usda_fndds_foods.csv
 ```
 
-## 4. Validate the imported tables
+Then:
 
 ```bash
 python scripts/validate_usda_phase10a.py
 ```
 
-The validator checks required columns, positive record counts, unique source IDs, numeric nutrition fields, and nutrient coverage.
+The validator should now report nutrient coverage without incorrectly failing
+solely because Foundation Foods has incomplete optional nutrient coverage.
 
-## 5. Build the canonical NutriPilot food table
 
-To create a staging catalogue without replacing the current app catalogue:
+### V6 data-quality handling
 
-```bash
-python scripts/build_food_catalogue.py \
-  --prototype data/foods.csv \
-  --usda-foundation data/usda_foundation_foods.csv \
-  --usda-fndds data/usda_fndds_foods.csv \
-  --output data/foods_phase10a.csv
-```
+Foundation Foods reports carbohydrate as **carbohydrate by difference**. Because
+that calculation is based on measured proximate components, a small number of
+records can have a negative computed carbohydrate value. USDA documentation
+explains the by-difference calculation and its analytical basis.
 
-Review the counts, then promote it when satisfied:
+NutriPilot's canonical nutrition layer cannot use a negative quantity of
+carbohydrate. During ingestion, any negative `carbs_g` value is therefore
+normalized to `0.0` and the `data_basis` field is annotated with
+`negative carbohydrate-by-difference normalized to 0 g`. This is an explicit
+application-level normalization, not a claim that USDA originally published
+zero.
 
-```bash
-cp data/foods_phase10a.csv data/foods.csv
-```
-
-The build is deterministic. For normalized name collisions, the source precedence is:
-
-1. ICMR-NIN IFCT 2017
-2. USDA Foundation
-3. USDA FNDDS
-4. other governed sources
-5. NutriPilot prototype seed
-
-The raw USDA archives are **not** required by the Streamlit runtime. Only the normalized canonical CSV is used by the application.
-
-## What Phase 10A does not do
-
-- It does not yet ingest USDA Branded Foods into the recipe ingredient table.
-- It does not yet scrape recipe websites.
-- It does not claim the resulting catalogue contains every food worldwide.
-- It does not generate nutrition values with the LLM.
-
-Branded products are reserved for Phase 10C and will remain a separate product layer.
-
-## Official USDA sources
-
-- FoodData Central downloads: https://fdc.nal.usda.gov/download-datasets/
-- FoodData Central API guide: https://fdc.nal.usda.gov/api-guide/
-- FoodData Central data documentation: https://fdc.nal.usda.gov/data-documentation/
+Calories derived with Atwater 4/9/4 use the normalized canonical carbohydrate
+value. The raw USDA archive remains the source of record and is not modified.
