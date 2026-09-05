@@ -1,0 +1,14 @@
+{
+  "phase": "10A",
+  "goal": "USDA Foundation + FNDDS governed ingredient/prepared-food coverage",
+  "usda": {
+    "foundation": "2026-04-30",
+    "fndds": "2024-10-31",
+    "branded": "2026-04-30"
+  },
+  "ifct": "2017",
+  "raw_archives_not_bundled": true,
+  "nutrition_is_deterministic": true,
+  "llm_generates_nutrition": false,
+  "usda_ingestion_ready": true
+}
