@@ -1,0 +1,46 @@
+recipe_id,name,meal_type,cuisine,regions,season,diet,goal_tags,weather_tags,ingredients,prep_time_min,cook_time_min,total_time_min,difficulty
+R001,Vegetable Poha,Breakfast,Indian,West India,All,Vegan,general wellness;better energy,hot;mild,Poha:70;Peanuts:10;Onion:40;Tomato:50;Green peas:40;Lemon:10,10,15,25,Easy
+R002,Besan Chilla with Curd,Breakfast,Indian,North India,All,Vegetarian,high protein;better energy,mild;hot,Besan (chickpea flour):70;Onion:30;Tomato:30;Spinach:30;Curd:100,10,15,25,Easy
+R003,Moong Dal Chilla,Breakfast,Indian,North India,All,Vegan,high protein;better energy,mild;hot,Moong dal:70;Onion:30;Tomato:30;Coriander leaves:10,15,15,30,Easy
+R004,Ragi Banana Bowl,Breakfast,Indian,South India,All,Vegan,better energy;general wellness,hot;mild,Ragi flour:50;Banana:100;Peanuts:15;Coconut:15,5,10,15,Easy
+R005,Overnight Oats with Banana,Breakfast,Global,Global,All,Vegetarian,general wellness;better energy,hot;mild,Oats:50;Milk:200;Banana:100;Chia seeds:10;Almonds:10,5,5,10,Easy
+R006,Greek Yogurt Fruit Bowl,Breakfast,Global,Global,All,Vegetarian,high protein;general wellness,hot;mild,Greek yogurt:200;Apple:100;Chia seeds:10;Walnuts:10,5,5,10,Easy
+R007,Masala Egg & Veg Toast,Breakfast,Indian,India,All,Eggetarian,high protein;better energy,mild;hot,Egg:100;Whole wheat bread:70;Tomato:40;Bell pepper:40;Onion:30,10,10,20,Easy
+R008,Tofu Veggie Scramble,Breakfast,Global,Global,All,Vegan,high protein;weight management,hot;mild,Tofu:150;Tomato:50;Spinach:50;Bell pepper:40;Olive oil:5,10,10,20,Easy
+R009,Bajra Vegetable Chilla,Breakfast,Indian,West India,All,Vegan,general wellness;weight management,cold;mild,Bajra flour:60;Onion:30;Carrot:30;Spinach:30;Curd:80,10,15,25,Easy
+R010,Idli with Sambar-Style Dal,Breakfast,Indian,South India,All,Vegan,general wellness;better energy,hot;mild,Idli rice:70;Toor dal:50;Tomato:60;Carrot:40;Onion:30,20,20,40,Medium
+R011,Chickpea Salad Bowl,Lunch,Global,Global,All,Vegan,high protein;weight management,hot;mild,Chickpeas:150;Cucumber:80;Tomato:80;Onion:30;Lemon:15;Coriander leaves:10,10,10,20,Easy
+R012,Rajma Brown Rice Bowl,Lunch,Indian,North India,All,Vegan,high protein;better energy,cold;mild,Rajma:120;Brown rice:120;Tomato:70;Onion:40;Coriander leaves:10,15,30,45,Medium
+R013,Dal Tadka with Rice,Lunch,Indian,India,All,Vegan,general wellness;better energy,cold;mild,Toor dal:100;Basmati rice:120;Tomato:60;Onion:40;Garlic:5;Mustard oil:5,10,30,40,Easy
+R014,Palak Paneer with Roti,Lunch,Indian,North India,Winter,Vegetarian,high protein;general wellness,cold;mild,Spinach:120;Paneer:100;Whole wheat atta:80;Tomato:60;Onion:40,15,25,40,Medium
+R015,Chole with Whole Wheat Roti,Lunch,Indian,North India,All,Vegan,high protein;better energy,cold;mild,Chickpeas:130;Whole wheat atta:80;Tomato:60;Onion:40;Coriander leaves:10,15,30,45,Medium
+R016,Mixed Vegetable Quinoa Bowl,Lunch,Global,Global,All,Vegan,weight management;general wellness,hot;mild,Quinoa:100;Broccoli:70;Carrot:60;Bell pepper:60;Chickpeas:80;Olive oil:5,10,20,30,Easy
+R017,Tofu Brown Rice Stir-Fry,Lunch,Global,Global,All,Vegan,high protein;weight management,hot;mild,Tofu:150;Brown rice:120;Broccoli:70;Bell pepper:60;Mushrooms:60;Olive oil:5,10,20,30,Easy
+R018,Chicken Rice Bowl,Lunch,Global,Global,All,Non-vegetarian,high protein;better energy,hot;mild,Chicken breast:150;Brown rice:120;Cucumber:60;Carrot:50;Tomato:50;Lemon:10,10,20,30,Easy
+R019,Fish Rice & Cucumber Bowl,Lunch,Indian,Coastal India,All,Non-vegetarian,high protein;general wellness,hot;mild,Fish:150;Basmati rice:120;Cucumber:80;Tomato:50;Coconut:15;Lemon:10,10,20,30,Easy
+R020,Egg & Chickpea Salad,Lunch,Global,Global,All,Eggetarian,high protein;weight management,hot;mild,Egg:100;Chickpeas:100;Cucumber:70;Tomato:70;Lemon:15,10,10,20,Easy
+R021,Bottle Gourd Moong Dal,Lunch,Indian,North India,Summer;Monsoon,Vegan,general wellness;weight management,hot;rainy,Bottle gourd:180;Moong dal:80;Tomato:60;Onion:40;Coriander leaves:10,10,25,35,Easy
+R022,Bhindi Roti Plate,Lunch,Indian,North India,Summer;Monsoon,Vegan,general wellness;better energy,hot;rainy,Okra:180;Whole wheat atta:80;Tomato:50;Onion:40;Mustard oil:5,10,20,30,Easy
+R023,Mushroom Peas Masala with Roti,Lunch,Indian,North India,Winter;Monsoon,Vegan,general wellness;high protein,cold;rainy,Mushrooms:150;Green peas:80;Whole wheat atta:80;Tomato:60;Onion:40,10,25,35,Easy
+R024,Lemon Rice with Peanuts,Lunch,Indian,South India,All,Vegan,better energy;general wellness,hot;mild,Basmati rice:130;Peanuts:20;Lemon:20;Green peas:50;Coriander leaves:10,10,15,25,Easy
+R025,Masoor Dal Vegetable Bowl,Lunch,Indian,India,All,Vegan,high protein;weight management,hot;mild,Masoor dal:100;Carrot:60;Spinach:60;Tomato:60;Brown rice:100,10,25,35,Easy
+R026,Pumpkin Coconut Dal,Dinner,Indian,South India,Monsoon;Winter,Vegan,general wellness,rainy;cold,Toor dal:90;Pumpkin:150;Coconut:20;Tomato:50;Onion:40,15,30,45,Medium
+R027,Cauliflower Peas Curry with Roti,Dinner,Indian,North India,Winter,Vegan,general wellness;weight management,cold;mild,Cauliflower:150;Green peas:80;Whole wheat atta:80;Tomato:60;Onion:40,15,25,40,Easy
+R028,Egg Curry with Rice,Dinner,Indian,India,All,Eggetarian,high protein;better energy,cold;mild,Egg:150;Basmati rice:120;Tomato:70;Onion:50;Spinach:40,15,25,40,Medium
+R029,Chicken Vegetable Curry with Rice,Dinner,Indian,India,All,Non-vegetarian,high protein;better energy,cold;mild;rainy,Chicken breast:150;Basmati rice:120;Tomato:70;Onion:50;Bell pepper:60,15,30,45,Medium
+R030,Fish Coconut Curry with Rice,Dinner,Indian,Coastal India,All,Non-vegetarian,high protein;general wellness,rainy;hot,Fish:150;Coconut milk:80;Basmati rice:120;Tomato:60;Onion:40,15,25,40,Medium
+R031,Tofu Coconut Vegetable Curry,Dinner,Global,Global,All,Vegan,high protein;general wellness,rainy;hot,Tofu:150;Coconut milk:80;Broccoli:70;Carrot:60;Bell pepper:50,10,20,30,Easy
+R032,Lentil Vegetable Soup,Dinner,Global,Global,All,Vegan,weight management;general wellness,cold;rainy,Masoor dal:90;Carrot:70;Tomato:80;Spinach:50;Onion:40,10,30,40,Easy
+R033,Barley Mushroom Soup,Dinner,Global,Global,Winter;Monsoon,Vegan,weight management;general wellness,cold;rainy,Barley:70;Mushrooms:120;Carrot:60;Onion:40;Spinach:40,10,30,40,Easy
+R034,Stuffed Bell Pepper with Quinoa,Dinner,Global,Global,All,Vegan,weight management;high protein,hot;mild,Bell pepper:150;Quinoa:90;Chickpeas:90;Tomato:60;Spinach:40,15,25,40,Medium
+R035,Palak Tofu Rice Bowl,Dinner,Indian,India,Winter,Vegan,high protein;general wellness,cold;mild,Spinach:120;Tofu:150;Brown rice:120;Tomato:50;Garlic:5,10,20,30,Easy
+R036,Sweet Potato Chickpea Chaat,Snack,Indian,India,Winter,Vegan,weight management;general wellness,cold;mild,Sweet potato:150;Chickpeas:80;Tomato:50;Onion:30;Lemon:15;Coriander leaves:10,10,15,25,Easy
+R037,Guava Peanut Snack Bowl,Snack,Indian,India,Winter;Spring,Vegan,general wellness;better energy,hot;mild,Guava:150;Peanuts:15;Chia seeds:10,5,5,10,Easy
+R038,Banana Almond Oat Bites,Snack,Global,Global,All,Vegan,better energy;general wellness,hot;mild,Banana:100;Oats:50;Almonds:15;Flax seeds:10,10,10,20,Easy
+R039,Curd Cucumber Bowl,Snack,Indian,India,Summer;Monsoon,Vegetarian,general wellness;weight management,hot;rainy,Curd:180;Cucumber:100;Mint leaves:10;Coriander leaves:10,5,5,10,Easy
+R040,Hummus Veggie Toast,Snack,Global,Global,All,Vegan,general wellness;weight management,hot;mild,Hummus:60;Whole wheat bread:70;Cucumber:50;Tomato:50;Bell pepper:40,5,5,10,Easy
+R041,Roasted Chickpea Crunch,Snack,Global,Global,All,Vegan,high protein;better energy,hot;mild,Chickpeas:100;Pumpkin seeds:15;Lemon:10,5,15,20,Easy
+R042,Mango Chia Yogurt Bowl,Snack,Indian,India,Summer,Vegetarian,general wellness;better energy,hot,Mango:120;Greek yogurt:150;Chia seeds:10,5,5,10,Easy
+R043,Watermelon Mint Bowl,Snack,Indian,India,Summer,Vegan,general wellness,hot,Watermelon:250;Mint leaves:10;Lemon:10,5,5,10,Easy
+R044,Papaya Chia Bowl,Snack,Indian,India,Summer;Monsoon,Vegan,general wellness;weight management,hot;rainy,Papaya:200;Chia seeds:10;Almonds:10,5,5,10,Easy
+R045,Pomegranate Walnut Yogurt,Snack,Global,Global,Autumn;Winter,Vegetarian,general wellness;high protein,cold;mild,Pomegranate:150;Greek yogurt:150;Walnuts:10,5,5,10,Easy

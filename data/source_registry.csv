@@ -1,0 +1,6 @@
+source_system,source_type,version,coverage,update_frequency,license_or_terms,usage_in_nutripilot
+USDA FoodData Central Foundation,ingredient,2026-04,Analytically derived minimally processed foods,April and October,CC0 1.0 Universal,Primary governed ingredient source
+USDA FoodData Central FNDDS,prepared_food,2024-10,FNDDS 2021-2023 survey foods,Every two years,CC0 1.0 Universal,Prepared-food and survey coverage
+USDA FoodData Central Branded,product,2026-04,Commercial branded food label data,Monthly,CC0 1.0 Universal,Separate packaged-product layer
+ICMR-NIN IFCT 2017,ingredient,2017,528 key Indian foods across 20 food groups,Publication release; verify updates,Verify applicable publication/data-use terms,Indian ingredient reference via approved structured import
+NutriPilot prototype seed,ingredient,phase8.5-seed,Small starter catalogue,None,Prototype/internal,Fallback only until governed source replacement

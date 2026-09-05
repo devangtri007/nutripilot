@@ -1,0 +1,26 @@
+alias,canonical_food,source,confidence,notes
+chana,Chickpeas,manual_seed,0.99,Common Indian name
+kabuli chana,Chickpeas,manual_seed,0.99,Common Indian name
+chole,Chickpeas,manual_seed,0.98,Common Indian name
+garbanzo beans,Chickpeas,manual_seed,0.99,English synonym
+rajma,Kidney beans,manual_seed,0.99,Common Indian name
+red kidney beans,Kidney beans,manual_seed,0.99,English synonym
+moong dal,Moong dal,manual_seed,0.99,Common Indian name
+mung dal,Moong dal,manual_seed,0.99,English synonym
+masoor dal,Masoor dal,manual_seed,0.99,Common Indian name
+red lentils,Masoor dal,manual_seed,0.99,English synonym
+toor dal,Toor dal,manual_seed,0.99,Common Indian name
+arhar dal,Toor dal,manual_seed,0.99,Common Indian name
+besan,Besan (chickpea flour),manual_seed,0.99,Common Indian name
+gram flour,Besan (chickpea flour),manual_seed,0.99,English synonym
+atta,Whole wheat flour,manual_seed,0.99,Common Indian name
+wheat flour,Whole wheat flour,manual_seed,0.95,Generic synonym
+curd,Curd,manual_seed,0.99,Common Indian name
+dahi,Curd,manual_seed,0.99,Common Indian name
+paneer,Paneer,manual_seed,0.99,Common Indian name
+poha,Poha,manual_seed,0.99,Common Indian name
+flattened rice,Poha,manual_seed,0.99,English synonym
+aval,Poha,manual_seed,0.95,Regional Indian name
+roti,Whole wheat roti,manual_seed,0.99,Common Indian dish
+chapati,Whole wheat roti,manual_seed,0.99,Common Indian dish
+phulka,Whole wheat roti,manual_seed,0.95,Regional Indian name
