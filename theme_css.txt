@@ -1,0 +1,369 @@
+<style>
+/* ======================================================================
+   NUTRIPILOT PREMIUM UI SYSTEM
+   FIX 01 — Theme-aware brand tokens
+   - Brand palette: Cream / Forest Green / Crisp Carrot.
+   - Streamlit theme variables remain the source of truth for base, surface,
+     text and border colors so Light, Dark and System modes remain legible.
+   ====================================================================== */
+:root {
+    --np-cream: #f3e8cc;
+    --np-green: #18542a;
+    --np-carrot: #f96015;
+
+    --np-bg: var(--background-color, var(--st-background-color, var(--np-cream)));
+    --np-surface: var(--secondary-background-color, var(--st-secondary-background-color, var(--np-bg)));
+    --np-text: var(--text-color, var(--st-text-color, var(--np-green)));
+    --np-border: var(--border-color, var(--st-border-color, var(--np-green)));
+    --np-muted: color-mix(in srgb, var(--np-text) 68%, transparent);
+    --np-border-soft: color-mix(in srgb, var(--np-border) 24%, transparent);
+    --np-border-strong: color-mix(in srgb, var(--np-border) 52%, transparent);
+    --np-accent-soft: color-mix(in srgb, var(--np-carrot) 14%, transparent);
+}
+
+/* FIX 02 — Theme-safe application canvas and typography */
+html, body,
+[data-testid="stAppViewContainer"],
+[data-testid="stAppViewContainer"] > .main,
+[data-testid="stMainBlockContainer"] {
+    background: var(--np-bg) !important;
+    color: var(--np-text) !important;
+}
+
+[data-testid="stHeader"] {
+    background: var(--np-bg) !important;
+    box-shadow: none !important;
+}
+
+[data-testid="stToolbar"] { background: transparent !important; }
+
+.main .block-container {
+    max-width: 1120px;
+    padding: 3.75rem 2rem 5rem;
+}
+
+[data-testid="stAppViewContainer"] * {
+    font-family: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont,
+        "Segoe UI", sans-serif;
+}
+
+[data-testid="stAppViewContainer"] h1,
+[data-testid="stAppViewContainer"] h2,
+[data-testid="stAppViewContainer"] h3,
+[data-testid="stAppViewContainer"] h4 {
+    color: var(--np-text) !important;
+    font-weight: 750 !important;
+    letter-spacing: -0.035em;
+}
+
+[data-testid="stAppViewContainer"] h1 {
+    font-size: clamp(2.45rem, 5vw, 4rem) !important;
+    line-height: 1.02 !important;
+    margin-bottom: .35rem !important;
+}
+
+[data-testid="stAppViewContainer"] h2 {
+    font-size: clamp(1.7rem, 3vw, 2.35rem) !important;
+    line-height: 1.08 !important;
+}
+
+[data-testid="stAppViewContainer"] h3 {
+    font-size: 1.35rem !important;
+    line-height: 1.15 !important;
+}
+
+[data-testid="stAppViewContainer"] p,
+[data-testid="stAppViewContainer"] label,
+[data-testid="stAppViewContainer"] li,
+[data-testid="stAppViewContainer"] .stMarkdown,
+[data-testid="stAppViewContainer"] .stCaption,
+[data-testid="stCaptionContainer"] {
+    color: var(--np-muted) !important;
+}
+
+[data-testid="stAppViewContainer"] strong { color: var(--np-text) !important; }
+
+hr {
+    border: 0 !important;
+    border-top: 1px solid var(--np-border-soft) !important;
+    margin: 2.1rem 0 !important;
+}
+
+/* FIX 03 — Rounded containers/cards with no gradients or heavy shadows */
+[data-testid="stVerticalBlockBorderWrapper"] {
+    border: 1px solid var(--np-border-soft) !important;
+    border-radius: 18px !important;
+    background: var(--np-surface) !important;
+    box-shadow: none !important;
+}
+
+/* FIX 04 — Inputs: theme-aware surface + carrot focus state */
+[data-baseweb="select"] > div,
+[data-baseweb="input"] > div,
+[data-baseweb="textarea"] > div,
+[data-testid="stTextInput"] input,
+[data-testid="stNumberInput"] input,
+textarea {
+    background: var(--np-surface) !important;
+    color: var(--np-text) !important;
+    border: 1px solid var(--np-border-soft) !important;
+    border-radius: 11px !important;
+    box-shadow: none !important;
+}
+
+[data-baseweb="select"] > div:hover,
+[data-baseweb="input"] > div:hover,
+[data-baseweb="textarea"] > div:hover {
+    border-color: var(--np-border-strong) !important;
+}
+
+[data-baseweb="select"] > div:focus-within,
+[data-baseweb="input"] > div:focus-within,
+[data-baseweb="textarea"] > div:focus-within,
+input:focus,
+textarea:focus {
+    border-color: var(--np-carrot) !important;
+    box-shadow: 0 0 0 1px var(--np-carrot) !important;
+}
+
+[data-baseweb="select"] span,
+[data-baseweb="select"] input,
+[data-baseweb="input"] input,
+[data-baseweb="textarea"] textarea {
+    color: var(--np-text) !important;
+}
+
+[data-baseweb="select"] svg { fill: var(--np-text) !important; }
+
+/* Dropdown/popover surfaces */
+[data-baseweb="popover"],
+[data-baseweb="menu"] {
+    background: var(--np-surface) !important;
+    border: 1px solid var(--np-border-soft) !important;
+    border-radius: 12px !important;
+    box-shadow: none !important;
+}
+
+[role="option"] {
+    background: var(--np-surface) !important;
+    color: var(--np-text) !important;
+}
+
+[role="option"]:hover,
+[role="option"][aria-selected="true"] {
+    background: var(--np-accent-soft) !important;
+    color: var(--np-text) !important;
+}
+
+/* FIX 05 — Multiselect tags use the single interactive accent */
+[data-testid="stMultiSelect"] [data-baseweb="tag"] {
+    background: var(--np-carrot) !important;
+    border: 1px solid var(--np-carrot) !important;
+    color: var(--np-cream) !important;
+    border-radius: 999px !important;
+}
+
+[data-testid="stMultiSelect"] [data-baseweb="tag"] span,
+[data-testid="stMultiSelect"] [data-baseweb="tag"] svg {
+    color: var(--np-cream) !important;
+    fill: var(--np-cream) !important;
+}
+
+/* FIX 06 — Radio buttons: no default red/grey; selected state is carrot */
+[data-testid="stRadio"] label,
+[data-testid="stCheckbox"] label,
+[data-testid="stMultiSelect"] label {
+    color: var(--np-text) !important;
+}
+
+[data-testid="stRadio"] [role="radio"] > div:first-child {
+    border-color: var(--np-border-strong) !important;
+    background: transparent !important;
+}
+
+[data-testid="stRadio"] [role="radio"][aria-checked="true"] > div:first-child {
+    border-color: var(--np-carrot) !important;
+    background: var(--np-carrot) !important;
+}
+
+[data-testid="stRadio"] [role="radio"][aria-checked="true"] > div:first-child > div {
+    background: var(--np-cream) !important;
+}
+
+/* FIX 07 — Slider: carrot track/thumb, theme-safe inactive rail */
+[data-testid="stSlider"] [role="slider"] {
+    background: var(--np-carrot) !important;
+    border-color: var(--np-carrot) !important;
+}
+
+[data-testid="stSlider"] [data-baseweb="slider"] > div > div {
+    background: var(--np-border-soft) !important;
+}
+
+/* FIX 08 — Buttons: ALWAYS high-contrast carrot + cream text */
+div.stButton > button,
+div.stDownloadButton > button,
+[data-testid="stFormSubmitButton"] button {
+    min-height: 2.7rem;
+    border-radius: 11px !important;
+    border: 1px solid var(--np-carrot) !important;
+    background: var(--np-carrot) !important;
+    color: var(--np-cream) !important;
+    font-weight: 700 !important;
+    box-shadow: none !important;
+    transition: transform 120ms ease, border-color 120ms ease;
+}
+
+div.stButton > button:hover,
+div.stDownloadButton > button:hover,
+[data-testid="stFormSubmitButton"] button:hover {
+    background: var(--np-carrot) !important;
+    color: var(--np-cream) !important;
+    border-color: var(--np-carrot) !important;
+    transform: translateY(-1px);
+}
+
+div.stButton > button:focus-visible,
+div.stDownloadButton > button:focus-visible,
+[data-testid="stFormSubmitButton"] button:focus-visible {
+    outline: 2px solid var(--np-carrot) !important;
+    outline-offset: 2px !important;
+    box-shadow: none !important;
+}
+
+div.stButton > button:disabled,
+div.stDownloadButton > button:disabled,
+[data-testid="stFormSubmitButton"] button:disabled {
+    opacity: .48 !important;
+    background: var(--np-surface) !important;
+    color: var(--np-muted) !important;
+    border-color: var(--np-border-soft) !important;
+}
+
+/* FIX 09 — Metric cards: subtle themed surface, clear hierarchy */
+[data-testid="stMetric"] {
+    background: var(--np-accent-soft) !important;
+    border: 1px solid var(--np-border-soft) !important;
+    border-radius: 15px !important;
+    padding: 1rem 1.1rem !important;
+}
+
+[data-testid="stMetricLabel"] {
+    color: var(--np-muted) !important;
+    font-size: .72rem !important;
+    font-weight: 700 !important;
+    text-transform: uppercase;
+    letter-spacing: .09em;
+}
+
+[data-testid="stMetricValue"] {
+    color: var(--np-text) !important;
+    font-weight: 800 !important;
+    letter-spacing: -.035em;
+}
+
+[data-testid="stMetricDelta"] { color: var(--np-carrot) !important; }
+
+/* FIX 10 — Info/success/error/warning banners all share one brand treatment.
+   This removes Streamlit's default red/green/yellow semantic colors from the UI. */
+[data-testid="stAlert"] {
+    background: var(--np-surface) !important;
+    border: 1px solid var(--np-border-soft) !important;
+    border-left: 3px solid var(--np-carrot) !important;
+    border-radius: 13px !important;
+    color: var(--np-text) !important;
+    box-shadow: none !important;
+}
+
+[data-testid="stAlert"] * { color: var(--np-text) !important; }
+[data-testid="stAlert"] svg { color: var(--np-carrot) !important; fill: var(--np-carrot) !important; }
+
+/* FIX 11 — Tabs: carrot is the only active-state color */
+[data-baseweb="tab-list"] {
+    gap: .35rem;
+    border-bottom: 1px solid var(--np-border-soft) !important;
+}
+
+[data-baseweb="tab"] {
+    color: var(--np-muted) !important;
+    background: transparent !important;
+}
+
+[data-baseweb="tab"][aria-selected="true"] {
+    color: var(--np-carrot) !important;
+    border-bottom: 2px solid var(--np-carrot) !important;
+}
+
+/* FIX 12 — Expanders/chat match the same card language */
+[data-testid="stExpander"] {
+    border: 1px solid var(--np-border-soft) !important;
+    border-radius: 14px !important;
+    background: var(--np-surface) !important;
+    box-shadow: none !important;
+}
+
+[data-testid="stExpander"] summary { color: var(--np-text) !important; font-weight: 700 !important; }
+
+[data-testid="stChatMessage"] {
+    background: var(--np-surface) !important;
+    border: 1px solid var(--np-border-soft) !important;
+    border-radius: 14px !important;
+    margin-bottom: .65rem !important;
+}
+
+[data-testid="stChatInput"] {
+    background: var(--np-surface) !important;
+    border: 1px solid var(--np-border-soft) !important;
+    border-radius: 14px !important;
+}
+
+[data-testid="stChatInput"] textarea {
+    background: transparent !important;
+    border: 0 !important;
+    box-shadow: none !important;
+}
+
+/* FIX 13 — Dataframes/tables: theme-aware surfaces and borders */
+[data-testid="stDataFrame"] {
+    border: 1px solid var(--np-border-soft) !important;
+    border-radius: 12px !important;
+    overflow: hidden !important;
+    background: var(--np-surface) !important;
+}
+
+/* Streamlit's dataframe uses a canvas for cells; these variables are still
+   consumed by current Streamlit dataframe styling where available. */
+[data-testid="stDataFrame"] {
+    --dataframe-border-color: var(--np-border-soft) !important;
+    --dataframe-header-background-color: var(--np-surface) !important;
+}
+
+/* FIX 14 — Sidebar follows the active Streamlit theme rather than gray defaults */
+section[data-testid="stSidebar"] {
+    background: var(--np-bg) !important;
+    border-right: 1px solid var(--np-border-soft) !important;
+}
+
+section[data-testid="stSidebar"] * { color: var(--np-text) !important; }
+
+section[data-testid="stSidebar"] [data-baseweb="select"] > div,
+section[data-testid="stSidebar"] [data-baseweb="input"] > div {
+    background: var(--np-surface) !important;
+    border-color: var(--np-border-soft) !important;
+}
+
+/* FIX 15 — Native Streamlit icon color follows the button foreground */
+div.stButton > button svg,
+div.stDownloadButton > button svg,
+[data-testid="stFormSubmitButton"] button svg {
+    color: currentColor !important;
+    fill: currentColor !important;
+}
+
+/* Responsive */
+@media (max-width: 760px) {
+    .main .block-container { padding: 2.25rem 1rem 3rem; }
+    [data-testid="stAppViewContainer"] h1 { font-size: 2.5rem !important; }
+    [data-testid="stMetric"] { padding: .8rem !important; }
+}
+</style>
