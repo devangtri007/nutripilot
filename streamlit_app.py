@@ -714,6 +714,54 @@ def build_shopping_list(plan):
     ])
 
 
+
+def normalize_plan_recipe_ids(plan, recipes, foods):
+    """Make plans from older app versions compatible with refinement.
+
+    Older session-state plans may contain recipe name/nutrition fields but no
+    recipe_id. Refinement requires a stable catalogue identifier, so recover it
+    deterministically from the recipe name and re-verify nutrition from the
+    catalogue.
+    """
+    lookup = recipes.set_index("recipe_id")
+    name_to_id = {}
+    for recipe_id, row in lookup.iterrows():
+        name_to_id[str(row["name"]).strip().casefold()] = recipe_id
+
+    normalized_days = []
+    for day in plan_days(plan):
+        normalized_meals = []
+        for meal in day.get("meals", []):
+            meal_copy = dict(meal)
+            recipe_id = meal_copy.get("recipe_id")
+
+            if recipe_id not in lookup.index:
+                name = str(meal_copy.get("name", "")).strip().casefold()
+                recipe_id = name_to_id.get(name)
+
+            if recipe_id not in lookup.index:
+                raise ValueError(
+                    f"Could not match '{meal_copy.get('name', 'unknown meal')}' "
+                    "to a catalogue recipe. Generate the plan again before refining it."
+                )
+
+            recipe = lookup.loc[recipe_id].to_dict()
+            verified = calculate_recipe_nutrition(recipe, foods)
+            verified["why"] = meal_copy.get("why", "")
+            verified["tags"] = meal_copy.get("tags", [])
+            verified["serving_multiplier"] = float(
+                meal_copy.get("serving_multiplier", 1.0)
+            )
+            normalized_meals.append(verified)
+
+        normalized_days.append({
+            "day": day["day"],
+            "meals": normalized_meals,
+            "totals": nutrition_totals(normalized_meals),
+        })
+
+    return normalized_days
+
 def refine_multi_day_plan(
     profile,
     location_context,
@@ -726,23 +774,45 @@ def refine_multi_day_plan(
         for row in recipe_candidates.to_dict(orient="records")
     ]
 
-    current_records = [
-        {
-            "day": day["day"],
-            "meals": [
+    # Compatibility layer: plans created before recipe_id was persisted may
+    # still be in Streamlit session_state after a deployment/reboot.
+    current_plan = normalize_plan_recipe_ids(current_plan, recipes, foods)
+
+    # Build the LLM-facing current plan defensively.  Do not index
+    # meal["recipe_id"] directly here: older/session-restored plans can have
+    # a recipe name without a persisted ID. normalize_plan_recipe_ids()
+    # above has already repaired those records, but .get() makes this boundary
+    # robust against malformed session-state objects as well.
+    current_records = []
+    for day in plan_days(current_plan):
+        normalized_meals = []
+        for meal in day.get("meals", []):
+            recipe_id = meal.get("recipe_id")
+            recipe_name = str(meal.get("name", "")).strip()
+
+            if not recipe_id:
+                raise ValueError(
+                    f"Could not identify recipe for '{recipe_name or 'unknown meal'}'. "
+                    "Please generate a fresh plan before refining it."
+                )
+
+            normalized_meals.append(
                 {
-                    "meal": meal["meal_type"],
-                    "recipe_id": meal["recipe_id"],
-                    "name": meal["name"],
-                    "nutrition": meal["nutrition"],
-                    "total_time_min": int(meal["total_time_min"]),
+                    "meal": meal.get("meal_type", ""),
+                    "recipe_id": recipe_id,
+                    "name": recipe_name,
+                    "nutrition": dict(meal.get("nutrition", {})),
+                    "total_time_min": int(meal.get("total_time_min", 0)),
                 }
-                for meal in day["meals"]
-            ],
-            "totals": day["totals"],
-        }
-        for day in plan_days(current_plan)
-    ]
+            )
+
+        current_records.append(
+            {
+                "day": day.get("day"),
+                "meals": normalized_meals,
+                "totals": dict(day.get("totals", nutrition_totals(day.get("meals", [])))),
+            }
+        )
 
     system_prompt = """
 You are NutriPilot's multi-day conversational refinement engine.
@@ -775,7 +845,7 @@ Output:
   ]
 }
 """
-    return call_json_model(
+    result = call_json_model(
         system_prompt,
         {
             "user_profile": profile,
@@ -786,9 +856,16 @@ Output:
         },
     )
 
+    # Preserve the original request for deterministic post-validation.
+    if isinstance(result, dict):
+        result["_user_request"] = user_request
+
+    return result
+
 
 def apply_plan_changes(raw_result, profile, recipes, foods, current_plan):
     lookup = recipes.set_index("recipe_id")
+    current_plan = normalize_plan_recipe_ids(current_plan, recipes, foods)
     result = [
         {
             "day": day["day"],
@@ -797,6 +874,9 @@ def apply_plan_changes(raw_result, profile, recipes, foods, current_plan):
         }
         for day in plan_days(current_plan)
     ]
+
+    if not isinstance(raw_result, dict):
+        raise ValueError("AI returned an invalid refinement response.")
 
     changes = raw_result.get("changes", [])
     if not isinstance(changes, list):
@@ -832,6 +912,20 @@ def apply_plan_changes(raw_result, profile, recipes, foods, current_plan):
             raise ValueError(
                 f"Recipe {recipe_id} is {recipe['meal_type']}, not {meal_type}."
             )
+
+        # Deterministic guard for the common "no rice" refinement.
+        request_text = str(raw_result.get("_user_request", "")).lower()
+        # The caller can attach the original request; otherwise the AI output
+        # remains governed by the catalogue-only prompt.
+        if "no rice" in request_text or "without rice" in request_text:
+            ingredient_names = [
+                item["food"].lower()
+                for item in parse_ingredients(recipe["ingredients"])
+            ]
+            if any("rice" in ingredient for ingredient in ingredient_names):
+                raise ValueError(
+                    f"Recipe {recipe_id} contains rice and cannot satisfy the no-rice request."
+                )
 
         verified = calculate_recipe_nutrition(recipe, foods)
         verified["why"] = change.get("reason", "")
@@ -869,7 +963,7 @@ if "single_meal" not in st.session_state:
     st.session_state.single_meal = None
 
 st.title("🥗 NutriPilot")
-st.caption("NutriPilot v8.2 FINAL")
+st.caption("NutriPilot v8.4 FINAL · refinement compatibility fix")
 st.subheader("Your local, seasonal nutrition copilot.")
 st.write("Meal recommendations shaped by your goals, diet, location, season and current weather.")
 
@@ -1315,6 +1409,7 @@ if profile and context:
                             st.session_state.meal_plan,
                             request_to_process,
                         )
+                        raw_result["_user_request"] = request_to_process
 
                         updated = apply_plan_changes(
                             raw_result,
