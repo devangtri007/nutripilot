@@ -149,3 +149,41 @@ The recipe catalogue is still the limiting factor for variety and precise target
 matching. Phase 6 deliberately does not invent recipes or modify ingredient
 quantities. More recipe coverage and portion-aware recipes would be the next data-layer
 improvement.
+
+
+## Phase 7 — Portion-Aware Nutrition Optimization
+
+Phase 7 adds deterministic portion optimization on top of the Phase 6 recipe
+selection engine.
+
+### New capabilities
+
+- Standard portion flexibility: ±25%.
+- Tighter portion flexibility: ±15%.
+- Each recipe remains structurally unchanged.
+- The optimizer scales the complete recipe serving size rather than inventing
+  ingredient combinations.
+- Daily calorie/protein fit is improved against the user's selected targets.
+- Optimization is dependency-free and deterministic.
+- Refined plans are re-optimized after recipe replacements.
+- The UI displays the serving multiplier used for each meal.
+- Shopping-list quantities automatically reflect the optimized portions.
+
+### Optimization design
+
+`AI chooses recipes → recipe validation → portion optimizer → deterministic nutrition`
+
+The optimizer evaluates bounded serving multipliers in 0.05× increments and uses
+a small regularization term to avoid unnecessary deviation from the standard serving.
+It also performs a few coordinate-descent passes so the serving sizes are evaluated
+in the context of the complete day's nutrition.
+
+This is deliberately **not** a clinical nutrition optimizer. It works against
+user-selected planning targets and the prototype's nutrition dataset.
+
+### Important limitation
+
+The optimizer scales a complete recipe rather than independently changing each
+ingredient. This preserves the recipe's ingredient ratios and keeps the AI from
+inventing unsupported quantities. A future portion-aware recipe dataset could
+support ingredient-level min/max ranges if needed.
