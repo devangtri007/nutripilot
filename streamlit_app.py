@@ -221,6 +221,20 @@ def build_recipe_candidates(recipes, foods, profile, context):
     return pd.DataFrame(rows)
 
 
+def validate_catalogue_integrity(foods, recipes):
+    """Fail early if recipes reference foods missing from the deployed catalogue."""
+    food_names = set(foods["food"].astype(str).str.strip())
+    missing = {}
+
+    for _, recipe in recipes.iterrows():
+        for item in parse_ingredients(recipe["ingredients"]):
+            food = item["food"]
+            if food not in food_names:
+                missing.setdefault(recipe["recipe_id"], []).append(food)
+
+    return missing
+
+
 def calculate_recipe_nutrition(recipe, foods):
     lookup = foods.set_index("food")
     totals = {
@@ -239,7 +253,12 @@ def calculate_recipe_nutrition(recipe, foods):
         grams = float(item["grams"])
 
         if food not in lookup.index:
-            raise ValueError(f"Recipe contains unsupported food: {food}")
+            raise ValueError(
+                f"Recipe '{recipe.get('name', recipe.get('recipe_id', 'unknown'))}' "
+                f"contains '{food}', but that ingredient is missing from "
+                f"data/foods.csv. Make sure both data/foods.csv and data/recipes.csv "
+                f"come from the same NutriPilot Phase 4 package."
+            )
 
         row = lookup.loc[food]
         factor = grams / 100
@@ -254,18 +273,50 @@ def calculate_recipe_nutrition(recipe, foods):
     return result
 
 
-def generate_meal_plan(profile, location_context, recipe_candidates):
+
+def recipe_record_for_prompt(recipe):
+    return {
+        "recipe_id": recipe["recipe_id"],
+        "name": recipe["name"],
+        "meal_type": recipe["meal_type"],
+        "cuisine": recipe["cuisine"],
+        "regions": recipe["regions"],
+        "season": recipe["season"],
+        "diet": recipe["diet"],
+        "goal_tags": recipe["goal_tags"],
+        "weather_tags": recipe["weather_tags"],
+        "ingredients": recipe["ingredients"],
+        "prep_time_min": int(recipe["prep_time_min"]),
+        "cook_time_min": int(recipe["cook_time_min"]),
+        "total_time_min": int(recipe["total_time_min"]),
+        "difficulty": recipe["difficulty"],
+    }
+
+
+def call_json_model(system_prompt, user_payload):
     if "OPENAI_API_KEY" not in st.secrets:
         raise RuntimeError("OPENAI_API_KEY is missing. Add it to Streamlit secrets.")
 
     client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
 
-    candidate_records = recipe_candidates[
-        [
-            "recipe_id", "name", "meal_type", "cuisine", "regions",
-            "season", "diet", "goal_tags", "weather_tags", "ingredients"
-        ]
-    ].to_dict(orient="records")
+    response = client.chat.completions.create(
+        model="gpt-4o-mini",
+        temperature=0.2,
+        response_format={"type": "json_object"},
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": json.dumps(user_payload)},
+        ],
+    )
+
+    return json.loads(response.choices[0].message.content)
+
+
+def generate_meal_plan(profile, location_context, recipe_candidates):
+    candidate_records = [
+        recipe_record_for_prompt(row)
+        for row in recipe_candidates.to_dict(orient="records")
+    ]
 
     system_prompt = """
 You are NutriPilot, a local, seasonal meal-planning copilot.
@@ -274,13 +325,12 @@ The recipe catalogue is the source of truth.
 
 Rules:
 1. Recommend ONLY recipe_id values from the provided catalogue.
-2. Do not invent recipes, ingredients, quantities, nutrition values, or cooking steps.
+2. Never invent recipes, ingredients, quantities, nutrition values, or cooking steps.
 3. Respect diet and foods to avoid.
-4. Prefer recipes whose season and weather tags fit the current context.
-5. Consider weather as a meal-style preference, not a medical rule.
-6. Use the user's goal to rank suitable recipes.
-7. Return exactly one recipe for each requested meal type when possible.
-8. Return valid JSON only.
+4. Prefer recipes whose season, region and weather tags fit the current context.
+5. Use the user's goal to rank suitable recipes.
+6. Return exactly one recipe for each requested meal type when possible.
+7. Return valid JSON only.
 
 Output:
 {
@@ -288,36 +338,142 @@ Output:
     {
       "meal": "Breakfast",
       "recipe_id": "R001",
-      "why": "Short explanation tied to goal, location, season and weather.",
-      "tags": ["seasonal", "local"]
+      "why": "Short explanation tied to the user's context.",
+      "tags": ["seasonal", "goal-fit"]
     }
   ]
 }
 """
 
-    user_prompt = {
-        "user_profile": profile,
-        "location_context": location_context,
-        "requested_meals": profile["meals"],
-        "candidate_recipes": candidate_records,
-    }
-
-    response = client.chat.completions.create(
-        model="gpt-4o-mini",
-        temperature=0.2,
-        response_format={"type": "json_object"},
-        messages=[
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": json.dumps(user_prompt)},
-        ],
+    return call_json_model(
+        system_prompt,
+        {
+            "user_profile": profile,
+            "location_context": location_context,
+            "requested_meals": profile["meals"],
+            "candidate_recipes": candidate_records,
+        },
     )
 
-    return json.loads(response.choices[0].message.content)
+
+def refine_meal_plan(profile, location_context, recipe_candidates, current_plan, user_request):
+    candidate_records = [
+        recipe_record_for_prompt(row)
+        for row in recipe_candidates.to_dict(orient="records")
+    ]
+
+    current_records = []
+    for meal in current_plan:
+        current_records.append({
+            "meal": meal["meal_type"],
+            "recipe_id": meal["recipe_id"],
+            "name": meal["name"],
+            "ingredients": meal["ingredients"],
+            "nutrition": meal["nutrition"],
+            "total_time_min": int(meal["total_time_min"]),
+            "difficulty": meal["difficulty"],
+        })
+
+    system_prompt = """
+You are NutriPilot's conversational meal-plan refinement engine.
+
+The user already has a meal plan. Interpret their latest request and modify
+ONLY what is necessary.
+
+The recipe catalogue is the source of truth.
+
+Rules:
+1. You may ONLY select recipe_id values from candidate_recipes.
+2. Never invent a recipe, ingredient, quantity, nutrition value, or cooking step.
+3. Respect the user's diet and foods to avoid at all times.
+4. Keep meals unchanged unless the user's request requires a change.
+5. If the user asks to replace/change a particular meal, replace only that meal.
+6. If the user gives a constraint such as "under 20 minutes", select recipes whose
+   total_time_min is actually <= 20.
+7. For "higher protein", prefer recipes with high-protein goal tags and higher
+   verified protein where useful.
+8. For "no rice", do not select recipes containing rice.
+9. Use season, location and weather context as secondary ranking signals.
+10. If the request cannot be satisfied from the candidate catalogue, do not invent
+    anything. Return an empty changes list and explain why.
+11. Return valid JSON only.
+
+Output:
+{
+  "assistant_message": "Short natural-language response.",
+  "changes": [
+    {
+      "meal": "Dinner",
+      "recipe_id": "R031",
+      "reason": "Why this replacement satisfies the request."
+    }
+  ]
+}
+"""
+
+    return call_json_model(
+        system_prompt,
+        {
+            "user_profile": profile,
+            "location_context": location_context,
+            "user_request": user_request,
+            "current_meal_plan": current_records,
+            "candidate_recipes": candidate_records,
+        },
+    )
+
+
+def verify_and_apply_changes(raw_result, profile, recipes, foods, current_plan):
+    lookup = recipes.set_index("recipe_id")
+    current_by_meal = {meal["meal_type"]: meal for meal in current_plan}
+    updated = list(current_plan)
+
+    changes = raw_result.get("changes", [])
+    for change in changes:
+        meal_type = change.get("meal")
+        recipe_id = change.get("recipe_id")
+
+        if meal_type not in profile["meals"]:
+            raise ValueError(f"AI tried to modify an unrequested meal: {meal_type}")
+
+        if recipe_id not in lookup.index:
+            raise ValueError(f"AI returned unsupported recipe_id: {recipe_id}")
+
+        recipe = lookup.loc[recipe_id].to_dict()
+
+        if recipe["meal_type"] != meal_type:
+            raise ValueError(
+                f"Recipe {recipe_id} is a {recipe['meal_type']} recipe, "
+                f"not a {meal_type} recipe."
+            )
+
+        verified = calculate_recipe_nutrition(recipe, foods)
+        verified["why"] = change.get("reason", "")
+        verified["tags"] = ["refined"]
+        current_by_meal[meal_type] = verified
+
+    # Preserve the user's requested meal order.
+    for i, meal_type in enumerate(profile["meals"]):
+        if meal_type in current_by_meal:
+            updated[i:i+1] = [current_by_meal[meal_type]]
+
+    # Remove accidental duplicates while preserving requested order.
+    final = []
+    seen = set()
+    for meal_type in profile["meals"]:
+        if meal_type in current_by_meal and meal_type not in seen:
+            final.append(current_by_meal[meal_type])
+            seen.add(meal_type)
+
+    return final
 
 
 foods = load_food_data()
 recipes = load_recipe_data()
 locations = load_location_data()
+
+# Detect mismatched/stale CSV files before the user reaches the AI step.
+catalogue_errors = validate_catalogue_integrity(foods, recipes)
 
 if "user_profile" not in st.session_state:
     st.session_state.user_profile = None
@@ -325,6 +481,8 @@ if "location_context" not in st.session_state:
     st.session_state.location_context = None
 if "meal_plan" not in st.session_state:
     st.session_state.meal_plan = None
+if "chat_messages" not in st.session_state:
+    st.session_state.chat_messages = []
 
 st.title("🥗 NutriPilot")
 st.subheader("Your local, seasonal nutrition copilot.")
@@ -429,6 +587,7 @@ if st.button("Set Profile & Load Local Context", type="primary", use_container_w
 
             st.session_state.location_context = context
             st.session_state.meal_plan = None
+            st.session_state.chat_messages = []
 
     except requests.RequestException as exc:
         st.error(f"Location/weather service error: {exc}")
@@ -467,7 +626,7 @@ if profile and context:
 
     with st.expander("View candidate recipe catalogue"):
         st.dataframe(
-            recipe_candidates[["recipe_id", "name", "meal_type", "cuisine", "regions", "season", "goal_tags"]],
+            recipe_candidates[["recipe_id", "name", "meal_type", "cuisine", "regions", "season", "goal_tags", "total_time_min", "difficulty"]],
             use_container_width=True,
             hide_index=True,
         )
@@ -512,6 +671,10 @@ if profile and context:
 
         for meal in st.session_state.meal_plan:
             st.subheader(f"{meal['meal_type']} — {meal['name']}")
+            st.caption(
+                f"{meal['total_time_min']:.0f} min total · "
+                f"{meal['difficulty']} · {meal['cuisine']}"
+            )
             ingredient_text = " · ".join(
                 f"{item['food']} ({item['grams']:.0f} g)"
                 for item in meal["parsed_ingredients"]
@@ -533,5 +696,90 @@ if profile and context:
             if meal.get("tags"):
                 st.caption(" · ".join(meal["tags"]))
             st.divider()
+
+
+        st.divider()
+        st.header("💬 Refine Your Plan")
+        st.write(
+            "Tell NutriPilot what you want to change. It will select another "
+            "catalogue recipe and re-check the result before updating your plan."
+        )
+
+        quick_actions = st.columns(3)
+        quick_requests = [
+            "Make dinner higher protein",
+            "No rice in the plan",
+            "Keep meals under 20 minutes",
+        ]
+
+        selected_quick = None
+        for idx, label in enumerate(quick_requests):
+            with quick_actions[idx]:
+                if st.button(label, use_container_width=True):
+                    selected_quick = label
+
+        for message in st.session_state.chat_messages:
+            with st.chat_message(message["role"]):
+                st.write(message["content"])
+
+        user_request = st.chat_input(
+            "e.g. Make dinner higher protein, or replace lunch with something quicker"
+        )
+
+        request_to_process = selected_quick or user_request
+
+        if request_to_process:
+            st.session_state.chat_messages.append(
+                {"role": "user", "content": request_to_process}
+            )
+
+            try:
+                with st.spinner("Refining your meal plan..."):
+                    raw_result = refine_meal_plan(
+                        profile,
+                        context,
+                        recipe_candidates,
+                        st.session_state.meal_plan,
+                        request_to_process,
+                    )
+                    updated_plan = verify_and_apply_changes(
+                        raw_result,
+                        profile,
+                        recipes,
+                        foods,
+                        st.session_state.meal_plan,
+                    )
+                    st.session_state.meal_plan = updated_plan
+
+                    assistant_message = raw_result.get(
+                        "assistant_message",
+                        "I updated the plan where possible.",
+                    )
+                    if not raw_result.get("changes"):
+                        assistant_message += (
+                            " I couldn't make that change using the current recipe catalogue."
+                        )
+
+                    st.session_state.chat_messages.append(
+                        {"role": "assistant", "content": assistant_message}
+                    )
+                    st.rerun()
+
+            except Exception as exc:
+                error_message = f"I couldn't apply that change safely: {exc}"
+                st.session_state.chat_messages.append(
+                    {"role": "assistant", "content": error_message}
+                )
+                st.error(error_message)
+
+if catalogue_errors:
+    with st.expander("⚠️ Data catalogue mismatch detected", expanded=True):
+        st.error(
+            "Some recipes reference ingredients that are missing from the deployed "
+            "`data/foods.csv`. Replace the entire `data` folder with the one from the "
+            "NutriPilot Phase 4 Fixed ZIP and redeploy."
+        )
+        for recipe_id, missing_foods in catalogue_errors.items():
+            st.write(f"**{recipe_id}:** {', '.join(missing_foods)}")
 
 st.caption("NutriPilot is a meal-planning prototype, not medical or dietary advice.")

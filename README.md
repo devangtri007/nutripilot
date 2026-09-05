@@ -68,3 +68,40 @@ Location selector
 - Allergy matching is simple text matching and is not suitable for medical-grade allergen verification.
 - Recipes are fixed combinations, not personalized portions.
 - The app is for meal-planning exploration, not medical or dietary advice.
+
+
+## Phase 5 — Conversational Refinement
+
+Phase 5 adds a conversational refinement layer after the initial plan is generated.
+
+Example requests:
+- "Make dinner higher protein"
+- "No rice in the plan"
+- "Keep meals under 20 minutes"
+- "Replace lunch with something quicker"
+
+The LLM does not directly rewrite ingredients. It selects replacement `recipe_id`
+values from the existing candidate catalogue. The application then validates each
+recipe and recalculates nutrition deterministically.
+
+Recipe metadata now includes:
+- `prep_time_min`
+- `cook_time_min`
+- `total_time_min`
+- `difficulty`
+
+This enables explicit constraints such as a maximum total cooking time.
+
+### Phase 5 architecture
+
+Initial plan:
+`Profile + location/weather → filtered recipes → AI selection → validation → nutrition`
+
+Refinement:
+`User message → AI interprets constraint → recipe IDs from catalogue → validation → deterministic nutrition → updated plan`
+
+### Current limitation
+
+The conversation layer can only satisfy requests that can be represented by the
+current recipe catalogue and metadata. It intentionally does not invent new recipes.
+This is a deliberate product/safety design choice for the prototype.
